@@ -6,7 +6,6 @@ on:
 
 permissions:
   contents: write
-  id-token: write
 
 jobs:
   publish:
@@ -24,9 +23,9 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
+          registry-url: https://registry.npmjs.org
 
-      - run: npm install -g npm@latest
       - run: pnpm install --frozen-lockfile
 
       - name: Bump version
@@ -38,6 +37,6 @@ jobs:
 
       - run: pnpm build
 
-      - run: npm publish --provenance --access public
+      - run: npm publish --access public
         env:
-          npm_config_registry: https://registry.npmjs.org
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
