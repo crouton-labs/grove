@@ -27,6 +27,8 @@ program
     "--port <spec...>",
     "Port definition: name:base:offset (repeatable, e.g. core:3068:100)",
   )
+  .option("--from-config", "Load port definitions from .claude/grove/config.json")
+  .option("--update", "Update existing registration instead of erroring on duplicate")
   .action(register);
 
 program

@@ -3,6 +3,7 @@ import fs from "fs";
 import { execSync } from "child_process";
 import { loadRegistry, saveRegistry, nextFreeSlot } from "../registry.js";
 import { computePorts } from "../ports.js";
+import { loadRepoConfig, hasSetupScript, GROVE_SETUP_FILE, GROVE_CONFIG_FILE } from "../config.js";
 
 interface PlantOptions {
   slot?: string;
@@ -80,7 +81,23 @@ export async function plant(
   }
   console.log("");
 
-  if (proj.initScript) {
+  const repoConfig = loadRepoConfig(proj.source);
+  const setupScriptExists = hasSetupScript(proj.source);
+
+  if (repoConfig) {
+    const configPortKeys = Object.keys(repoConfig.ports).sort().join(",");
+    const registryPortKeys = Object.keys(proj.ports).sort().join(",");
+    if (configPortKeys !== registryPortKeys) {
+      console.warn(`Warning: registry ports differ from ${GROVE_CONFIG_FILE}`);
+      console.warn(`Run: grove register "${proj.source}" --from-config --update`);
+    }
+  }
+
+  const shouldSetupHandleCopy = repoConfig?.setupHandlesCopy === true && setupScriptExists;
+
+  if (shouldSetupHandleCopy) {
+    console.log("Setup script will handle copy and configuration...");
+  } else if (proj.initScript) {
     const scriptPath = path.join(proj.source, proj.initScript);
     if (!fs.existsSync(scriptPath)) {
       console.error(`Error: init script not found: ${scriptPath}`);
@@ -98,25 +115,52 @@ export async function plant(
       process.exit(1);
     }
   } else {
-    // Default: rsync excluding heavy directories
-    console.log("Copying source (excluding node_modules, .next, dist)...");
-    const excludes = [
-      "node_modules",
-      ".next",
-      "dist",
-      ".turbo",
-      ".cache",
-      "*.tsbuildinfo",
-    ]
-      .map((d) => `--exclude="${d}"`)
-      .join(" ");
+    const defaultExcludes = ["node_modules", ".next", "dist", ".turbo", ".cache", "*.tsbuildinfo"];
+    const excludeList = repoConfig?.excludes ?? defaultExcludes;
+    const excludes = excludeList.map((d) => `--exclude="${d}"`).join(" ");
+    console.log("Copying source...");
     execSync(`rsync -a ${excludes} "${proj.source}/" "${targetPath}/"`, {
       stdio: "inherit",
     });
   }
 
+  if (setupScriptExists) {
+    const setupPath = path.join(
+      shouldSetupHandleCopy ? proj.source : targetPath,
+      GROVE_SETUP_FILE,
+    );
+    const mode = shouldSetupHandleCopy ? "full" : "post-copy";
+
+    console.log(`Running setup script (mode: ${mode})...`);
+
+    const env: Record<string, string> = {
+      ...(process.env as Record<string, string>),
+      GROVE_SLOT: String(slot),
+      GROVE_SOURCE: proj.source,
+      GROVE_TARGET: targetPath,
+      GROVE_INSTANCE_NAME: name,
+      GROVE_PORTS_JSON: JSON.stringify(ports),
+    };
+    for (const [portName, portValue] of Object.entries(ports)) {
+      env[`GROVE_PORT_${portName.toUpperCase().replace(/-/g, "_")}`] = String(portValue);
+    }
+
+    try {
+      execSync(
+        `bash "${setupPath}" --mode ${mode} --source "${proj.source}" --target "${targetPath}" --slot ${slot} --name "${name}"`,
+        { stdio: "inherit", cwd: proj.source, env },
+      );
+    } catch {
+      console.error("Warning: setup script failed. Instance will be registered but may need manual setup.");
+    }
+  }
+
   if (!fs.existsSync(targetPath)) {
-    console.error("Error: target was not created. Init script may have failed.");
+    if (shouldSetupHandleCopy) {
+      console.error("Error: setup script did not create target directory.");
+    } else {
+      console.error("Error: target was not created.");
+    }
     process.exit(1);
   }
 

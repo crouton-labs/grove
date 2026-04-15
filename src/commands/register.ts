@@ -1,6 +1,7 @@
 import path from "path";
 import fs from "fs";
 import { loadRegistry, saveRegistry } from "../registry.js";
+import { loadRepoConfig, hasSetupScript } from "../config.js";
 import { PortDef } from "../types.js";
 
 interface RegisterOptions {
@@ -8,6 +9,8 @@ interface RegisterOptions {
   init?: string;
   teardown?: string;
   port?: string[];
+  fromConfig?: boolean;
+  update?: boolean;
 }
 
 export async function register(projectPath: string, options: RegisterOptions) {
@@ -17,17 +20,33 @@ export async function register(projectPath: string, options: RegisterOptions) {
     process.exit(1);
   }
 
-  const name = options.name || path.basename(absPath);
   const registry = loadRegistry();
 
-  if (registry.projects[name]) {
-    console.error(
-      `Error: project "${name}" already registered. Use a different --name or unregister first.`,
-    );
-    process.exit(1);
+  const ports: Record<string, PortDef> = {};
+  let initScript: string | undefined = options.init;
+  let teardownScript: string | undefined = options.teardown;
+  let resolvedName: string | undefined = options.name;
+
+  if (options.fromConfig) {
+    const repoConfig = loadRepoConfig(absPath);
+    if (!repoConfig) {
+      console.error(`Error: no ${".claude/grove/config.json"} found at ${absPath}`);
+      process.exit(1);
+    }
+
+    Object.assign(ports, repoConfig.ports);
+    if (!resolvedName && repoConfig.name) resolvedName = repoConfig.name;
+    if (!teardownScript && repoConfig.teardownScript) teardownScript = repoConfig.teardownScript;
+    if (!initScript && hasSetupScript(absPath)) initScript = ".claude/grove/setup.sh";
+  } else {
+    const repoConfig = loadRepoConfig(absPath);
+    if (repoConfig && (!options.port || options.port.length === 0)) {
+      console.log(
+        `Hint: Found .claude/grove/config.json — use --from-config to load port definitions from it.`,
+      );
+    }
   }
 
-  const ports: Record<string, PortDef> = {};
   if (options.port) {
     for (const p of options.port) {
       const parts = p.split(":");
@@ -50,10 +69,39 @@ export async function register(projectPath: string, options: RegisterOptions) {
     }
   }
 
+  const name = resolvedName || path.basename(absPath);
+
+  if (registry.projects[name]) {
+    if (!options.update) {
+      console.error(
+        `Error: project "${name}" already registered. Use a different --name, --update, or unregister first.`,
+      );
+      process.exit(1);
+    }
+
+    const existing = registry.projects[name];
+    Object.assign(existing.ports, ports);
+    if (initScript) existing.initScript = initScript;
+    if (teardownScript) existing.teardownScript = teardownScript;
+    saveRegistry(registry);
+
+    console.log(`Updated project "${name}"`);
+    console.log(`  Source: ${absPath}`);
+    if (existing.initScript) console.log(`  Init:   ${existing.initScript}`);
+    if (existing.teardownScript) console.log(`  Teardown: ${existing.teardownScript}`);
+    if (Object.keys(existing.ports).length) {
+      console.log(`  Ports:`);
+      for (const [n, p] of Object.entries(existing.ports)) {
+        console.log(`    ${n}: ${p.base} + slot × ${p.offset}`);
+      }
+    }
+    return;
+  }
+
   registry.projects[name] = {
     source: absPath,
-    initScript: options.init,
-    teardownScript: options.teardown,
+    initScript,
+    teardownScript,
     ports,
     instances: [],
   };
@@ -62,8 +110,8 @@ export async function register(projectPath: string, options: RegisterOptions) {
 
   console.log(`Registered project "${name}"`);
   console.log(`  Source: ${absPath}`);
-  if (options.init) console.log(`  Init:   ${options.init}`);
-  if (options.teardown) console.log(`  Teardown: ${options.teardown}`);
+  if (initScript) console.log(`  Init:   ${initScript}`);
+  if (teardownScript) console.log(`  Teardown: ${teardownScript}`);
   if (Object.keys(ports).length) {
     console.log(`  Ports:`);
     for (const [n, p] of Object.entries(ports)) {
