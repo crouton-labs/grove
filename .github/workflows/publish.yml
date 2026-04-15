@@ -26,7 +26,6 @@ jobs:
         with:
           node-version: 22
 
-      - run: npm install -g npm@latest
       - run: pnpm install --frozen-lockfile
 
       - name: Bump version
