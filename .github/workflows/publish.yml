@@ -6,7 +6,6 @@ on:
 
 permissions:
   contents: write
-  id-token: write
 
 jobs:
   publish:
@@ -23,7 +22,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          registry-url: https://registry.npmjs.org
           cache: pnpm
 
       - run: pnpm install --frozen-lockfile
@@ -31,7 +29,6 @@ jobs:
       - name: Version bump
         id: version
         run: |
-          # Determine bump type from commit messages since last tag
           LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
           if [ -z "$LAST_TAG" ]; then
             RANGE="HEAD"
@@ -49,7 +46,6 @@ jobs:
             BUMP="patch"
           fi
 
-          # Check if version already published
           CURRENT=$(node -p "require('./package.json').version")
           PUBLISHED=$(npm view @crouton-kit/grove version 2>/dev/null || echo "0.0.0")
 
@@ -69,7 +65,9 @@ jobs:
         run: pnpm build
 
       - name: Publish
-        run: npm publish --access public
+        run: |
+          echo "//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}" > ~/.npmrc
+          npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
