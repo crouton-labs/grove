@@ -1,6 +1,6 @@
 {
   "name": "@crouton-kit/grove",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "Parallel project instance manager — plant, adopt, uproot, and monitor isolated copies of your codebase",
   "type": "module",
   "bin": {
