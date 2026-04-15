@@ -48,12 +48,18 @@ npm run dev -- doctor
 
 Projects can store grove configuration in their repo at `.claude/grove/` (tracked in git) so any team member can plant without re-discovering ports:
 
-- `config.json` — port definitions, rsync excludes, project name (schema version 1)
-- `setup.sh` — post-plant script that patches .env, .claude/ ports, installs deps, runs codegen
+- `config.json` — port definitions, repo specs, copy/patch/install declarations (schema version 1)
+- `setup.sh` — optional post-plant script for custom logic that config can't express
 
 The `/grove:seed` slash command generates both files. After committing them, `/grove:plant` skips discovery entirely.
 
-`setup.sh` receives `--mode full|post-copy --source <path> --target <path> --slot <N> --name <name>` args plus `GROVE_PORT_*`, `GROVE_PORTS_JSON`, `GROVE_SLOT`, `GROVE_SOURCE`, `GROVE_TARGET`, `GROVE_INSTANCE_NAME` env vars.
+**Config-driven setup fields** (all optional, processed in order by `grove plant`):
+- `repos` — multi-repo clone definitions: `{ "name": { "branch": "dev", "recurseSubmodules": true } }`. Replaces rsync for multi-repo projects.
+- `copyFromSource` — files/dirs to copy from source instance: `[{ "from": "path", "to": "path", "patchPorts": true }]`. For untracked files (`.env`, `.yalc`, `dist/`) that git clone won't include.
+- `patchPortsIn` — glob patterns for automatic port substitution: `[".claude/**/*.md", "**/.env"]`. Replaces base port numbers with computed ports using `(?<!\d)BASE(?!\d)` regex. Skips `grove/config.json`.
+- `install` — per-directory install commands: `[{ "dir": "subproject", "cmds": ["pnpm install"] }]`
+
+`setup.sh` runs last after all config-driven steps. All context is passed via env vars: `GROVE_SOURCE`, `GROVE_TARGET`, `GROVE_SLOT`, `GROVE_INSTANCE_NAME`, `GROVE_PORTS_JSON`, and `GROVE_PORT_*` for each computed port.
 
 ## CI/CD
 

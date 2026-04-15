@@ -4,6 +4,7 @@ import { execSync } from "child_process";
 import { loadRegistry, saveRegistry, nextFreeSlot } from "../registry.js";
 import { computePorts } from "../ports.js";
 import { loadRepoConfig, hasSetupScript, GROVE_SETUP_FILE, GROVE_CONFIG_FILE } from "../config.js";
+import { cloneRepos, copyFromSource, patchPorts, runInstalls } from "../setup.js";
 
 interface PlantOptions {
   slot?: string;
@@ -93,12 +94,11 @@ export async function plant(
     }
   }
 
-  const shouldSetupHandleCopy = repoConfig?.setupHandlesCopy === true && setupScriptExists;
-  const initIsSetupScript = proj.initScript === GROVE_SETUP_FILE;
-
-  if (shouldSetupHandleCopy) {
-    console.log("Setup script will handle copy and configuration...");
-  } else if (proj.initScript && !initIsSetupScript) {
+  // --- Copy phase ---
+  if (repoConfig?.repos) {
+    console.log("Cloning repos...");
+    cloneRepos(proj.source, targetPath, repoConfig.repos);
+  } else if (proj.initScript) {
     const scriptPath = path.join(proj.source, proj.initScript);
     if (!fs.existsSync(scriptPath)) {
       console.error(`Error: init script not found: ${scriptPath}`);
@@ -125,14 +125,27 @@ export async function plant(
     });
   }
 
-  if (setupScriptExists) {
-    const setupPath = path.join(
-      shouldSetupHandleCopy ? proj.source : targetPath,
-      GROVE_SETUP_FILE,
-    );
-    const mode = shouldSetupHandleCopy ? "full" : "post-copy";
+  // --- Config-driven setup ---
+  if (repoConfig?.copyFromSource) {
+    console.log("Copying files from source...");
+    copyFromSource(proj.source, targetPath, repoConfig.copyFromSource, proj.ports, slot);
+  }
 
-    console.log(`Running setup script (mode: ${mode})...`);
+  if (repoConfig?.patchPortsIn) {
+    console.log("Patching port references...");
+    patchPorts(targetPath, repoConfig.patchPortsIn, proj.ports, slot);
+  }
+
+  if (repoConfig?.install) {
+    console.log("Installing dependencies...");
+    runInstalls(targetPath, repoConfig.install);
+  }
+
+  // --- setup.sh (runs last for anything config can't express) ---
+  if (setupScriptExists) {
+    const setupPath = path.join(targetPath, GROVE_SETUP_FILE);
+
+    console.log("Running setup script...");
 
     const env: Record<string, string> = {
       ...(process.env as Record<string, string>),
@@ -147,21 +160,14 @@ export async function plant(
     }
 
     try {
-      execSync(
-        `bash "${setupPath}" --mode ${mode} --source "${proj.source}" --target "${targetPath}" --slot ${slot} --name "${name}"`,
-        { stdio: "inherit", cwd: proj.source, env },
-      );
+      execSync(`bash "${setupPath}"`, { stdio: "inherit", cwd: targetPath, env });
     } catch {
       console.error("Warning: setup script failed. Instance will be registered but may need manual setup.");
     }
   }
 
   if (!fs.existsSync(targetPath)) {
-    if (shouldSetupHandleCopy) {
-      console.error("Error: setup script did not create target directory.");
-    } else {
-      console.error("Error: target was not created.");
-    }
+    console.error("Error: target was not created.");
     process.exit(1);
   }
 
