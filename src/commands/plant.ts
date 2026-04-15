@@ -94,10 +94,11 @@ export async function plant(
   }
 
   const shouldSetupHandleCopy = repoConfig?.setupHandlesCopy === true && setupScriptExists;
+  const initIsSetupScript = proj.initScript === GROVE_SETUP_FILE;
 
   if (shouldSetupHandleCopy) {
     console.log("Setup script will handle copy and configuration...");
-  } else if (proj.initScript) {
+  } else if (proj.initScript && !initIsSetupScript) {
     const scriptPath = path.join(proj.source, proj.initScript);
     if (!fs.existsSync(scriptPath)) {
       console.error(`Error: init script not found: ${scriptPath}`);
