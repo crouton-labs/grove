@@ -71,7 +71,7 @@ Push to `main` triggers `.github/workflows/publish.yml`:
 ## Companion Plugin
 
 The companion `crouton-kit/plugins/grove` plugin wraps this CLI for Claude Code:
-- `commands/` — Seven slash commands (`/grove:seed`, `/grove:plant`, `/grove:register`, etc.) that delegate to the `grove` binary
+- `commands/` — Slash commands. Most (`/grove:seed`, `/grove:plant`, `/grove:register`, `/grove:adopt`, `/grove:uproot`, `/grove:list`, `/grove:doctor`) delegate to the `grove` binary. `/grove:headless` is a pure scaffolding command that generates a project-tailored `.claude/scripts/headless.sh` + `.claude/skills/headless/SKILL.md` for managing supervised background dev servers with grove-instance-safe log isolation (`/tmp/grove/<path-slug>/`).
 - `hooks/check-grove.sh` — SessionStart hook that verifies the CLI is installed globally
 - `.claude-plugin/plugin.json` — Plugin metadata
 
