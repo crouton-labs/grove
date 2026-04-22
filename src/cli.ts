@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, resolve } from "node:path";
 import { Command } from "commander";
 import { register } from "./commands/register.js";
 import { plant } from "./commands/plant.js";
@@ -7,12 +10,15 @@ import { list } from "./commands/list.js";
 import { adopt } from "./commands/adopt.js";
 import { doctor } from "./commands/doctor.js";
 
+const pkgPath = resolve(dirname(fileURLToPath(import.meta.url)), "..", "package.json");
+const { version } = JSON.parse(readFileSync(pkgPath, "utf-8")) as { version: string };
+
 const program = new Command();
 
 program
   .name("grove")
   .description("Parallel project instance manager")
-  .version("0.1.0");
+  .version(version);
 
 program
   .command("register <path>")
