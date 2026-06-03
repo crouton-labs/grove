@@ -59,10 +59,19 @@ export async function plant(
     slot = nextFreeSlot(usedSlots);
   }
 
-  // Target path — sibling to source, named <name>
+  // Target path — under config.instancesDir if set (resolved relative to source),
+  // otherwise a sibling of the source. An explicit --path always wins.
+  const repoConfig = loadRepoConfig(proj.source);
+  const baseDir = repoConfig?.instancesDir
+    ? path.resolve(proj.source, repoConfig.instancesDir)
+    : path.dirname(proj.source);
   const targetPath = options.path
     ? path.resolve(options.path)
-    : path.join(path.dirname(proj.source), name);
+    : path.join(baseDir, name);
+
+  if (!options.path) {
+    fs.mkdirSync(baseDir, { recursive: true });
+  }
 
   if (fs.existsSync(targetPath)) {
     console.error(`Error: target already exists: ${targetPath}`);
@@ -82,7 +91,6 @@ export async function plant(
   }
   console.log("");
 
-  const repoConfig = loadRepoConfig(proj.source);
   const setupScriptExists = hasSetupScript(proj.source);
 
   if (repoConfig) {

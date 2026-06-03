@@ -25,6 +25,7 @@ export interface InstallSpec {
 export interface GroveRepoConfig {
   version: number;
   name?: string;
+  instancesDir?: string;     // parent dir for new instances, resolved relative to source (default: sibling of source)
   ports: Record<string, PortDef>;
   excludes?: string[];
   teardownScript?: string;
@@ -74,6 +75,9 @@ export function validateRepoConfig(raw: unknown): GroveRepoConfig {
 
   if (obj.name !== undefined && typeof obj.name !== "string") {
     throw new Error("grove config name must be a string");
+  }
+  if (obj.instancesDir !== undefined && typeof obj.instancesDir !== "string") {
+    throw new Error("grove config instancesDir must be a string");
   }
   if (obj.excludes !== undefined) {
     if (!Array.isArray(obj.excludes) || !obj.excludes.every((e) => typeof e === "string")) {
@@ -170,6 +174,7 @@ export function validateRepoConfig(raw: unknown): GroveRepoConfig {
   return {
     version: obj.version,
     name: obj.name as string | undefined,
+    instancesDir: obj.instancesDir as string | undefined,
     ports,
     excludes: obj.excludes as string[] | undefined,
     teardownScript: obj.teardownScript as string | undefined,
