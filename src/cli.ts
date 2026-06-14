@@ -38,8 +38,8 @@ program
   .action(register);
 
 program
-  .command("plant <project> <name>")
-  .description("Create a new project instance")
+  .command("plant <project> [name]")
+  .description("Create a new project instance (name defaults to the slot number)")
   .option("--slot <n>", "Slot number (auto-assigned if omitted)")
   .option("--path <path>", "Custom target path (default: sibling to source)")
   .action(plant);
