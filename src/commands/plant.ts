@@ -13,7 +13,7 @@ interface PlantOptions {
 
 export async function plant(
   project: string,
-  name: string,
+  name: string | undefined,
   options: PlantOptions,
 ) {
   const registry = loadRegistry();
@@ -35,13 +35,6 @@ export async function plant(
     process.exit(1);
   }
 
-  if (proj.instances.find((i) => i.name === name)) {
-    console.error(
-      `Error: instance "${name}" already exists for project "${project}".`,
-    );
-    process.exit(1);
-  }
-
   // Slot assignment
   const usedSlots = new Set(proj.instances.map((i) => i.slot));
   let slot: number;
@@ -57,6 +50,16 @@ export async function plant(
     }
   } else {
     slot = nextFreeSlot(usedSlots);
+  }
+
+  // Name defaults to the slot number, so `grove plant <project>` yields 1, 2, 3, ...
+  name = name ?? String(slot);
+
+  if (proj.instances.find((i) => i.name === name)) {
+    console.error(
+      `Error: instance "${name}" already exists for project "${project}".`,
+    );
+    process.exit(1);
   }
 
   // Target path — under config.instancesDir if set (resolved relative to source),
