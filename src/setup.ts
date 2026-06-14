@@ -264,6 +264,12 @@ export function patchPorts(
     // Never patch grove's own config — it stores base port definitions
     if (rel === GROVE_CONFIG_FILE) continue;
 
+    // Never patch committed env templates — by convention they hold base/
+    // placeholder values, so patching them just creates a spurious diff in
+    // every instance (the real .env, copied + patched, is what runs).
+    const base = path.basename(rel);
+    if (base === ".env.example" || base === ".env.sample" || base === ".env.template") continue;
+
     const matches = globs.some((g) => matchGlob(rel, g));
     if (!matches) continue;
 
