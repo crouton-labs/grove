@@ -9,14 +9,14 @@ import { uproot } from "./commands/uproot.js";
 import { list } from "./commands/list.js";
 import { adopt } from "./commands/adopt.js";
 import { doctor } from "./commands/doctor.js";
-import { maybeScheduleUpdate } from "./auto-update.js";
+import { noticeIfUpdateAvailable } from "./update-notice.js";
 
 const pkgPath = resolve(dirname(fileURLToPath(import.meta.url)), "..", "package.json");
 const { version } = JSON.parse(readFileSync(pkgPath, "utf-8")) as { version: string };
 
-// Best-effort: throttled, non-blocking background self-update. Lands for the
-// next invocation; never blocks or prints (grove's stdout is parsed downstream).
-maybeScheduleUpdate();
+// Notify (don't auto-install) when a newer grove is published. Throttled, and
+// written to stderr so stdout stays clean for callers that parse it.
+await noticeIfUpdateAvailable(version);
 
 const program = new Command();
 
