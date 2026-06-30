@@ -83,6 +83,7 @@ export async function register(projectPath: string, options: RegisterOptions) {
     }
 
     const existing = registry.projects[name];
+    existing.source = absPath; // re-registering from a moved location updates source
     Object.assign(existing.ports, ports);
     if (initScript) existing.initScript = initScript;
     if (teardownScript) existing.teardownScript = teardownScript;
