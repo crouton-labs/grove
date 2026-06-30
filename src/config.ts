@@ -33,6 +33,7 @@ export interface GroveRepoConfig {
   copyFromSource?: CopyFromSourceSpec[];
   patchPortsIn?: string[];   // glob patterns relative to target
   install?: InstallSpec[];
+  aliases?: Record<string, string>; // aliasPrefix -> subdir relative to instance root
 }
 
 export function loadRepoConfig(projectPath: string): GroveRepoConfig | null {
@@ -86,6 +87,20 @@ export function validateRepoConfig(raw: unknown): GroveRepoConfig {
   }
   if (obj.teardownScript !== undefined && typeof obj.teardownScript !== "string") {
     throw new Error("grove config teardownScript must be a string");
+  }
+  // Validate aliases
+  let aliases: Record<string, string> | undefined;
+  if (obj.aliases !== undefined) {
+    if (typeof obj.aliases !== "object" || obj.aliases === null) {
+      throw new Error("grove config aliases must be an object");
+    }
+    aliases = {};
+    for (const [key, val] of Object.entries(obj.aliases as Record<string, unknown>)) {
+      if (typeof val !== "string") {
+        throw new Error(`aliases.${key} must be a string (subdir relative to instance)`);
+      }
+      aliases[key] = val;
+    }
   }
 
   // Validate repos
@@ -182,6 +197,7 @@ export function validateRepoConfig(raw: unknown): GroveRepoConfig {
     copyFromSource,
     patchPortsIn: obj.patchPortsIn as string[] | undefined,
     install,
+    aliases,
   };
 }
 

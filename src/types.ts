@@ -16,6 +16,10 @@ export interface GroveProjectConfig {
   teardownScript?: string;
   ports: Record<string, PortDef>;
   instances: GroveInstance[];
+  // Shell-alias scheme: { aliasPrefix: subdir-relative-to-instance }.
+  // e.g. { "cr": ".", "cn": "northlight", "cv": "northlight-vault" }
+  // generates `alias cr<slot>='cd <instance>'`, etc.
+  aliases?: Record<string, string>;
 }
 
 export interface GroveRegistry {

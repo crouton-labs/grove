@@ -2,6 +2,7 @@ import path from "path";
 import fs from "fs";
 import { loadRegistry, saveRegistry, nextFreeSlot } from "../registry.js";
 import { computePorts } from "../ports.js";
+import { regenerateAliases } from "../aliases.js";
 
 interface AdoptOptions {
   slot?: string;
@@ -74,6 +75,7 @@ export async function adopt(
     created: new Date().toISOString(),
   });
   saveRegistry(registry);
+  regenerateAliases(registry);
 
   console.log(`Adopted ${project}/${instanceName}`);
   console.log(`  Path: ${absPath}`);

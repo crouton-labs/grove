@@ -5,6 +5,8 @@ import { loadRegistry, saveRegistry, nextFreeSlot } from "../registry.js";
 import { computePorts } from "../ports.js";
 import { loadRepoConfig, hasSetupScript, GROVE_SETUP_FILE, GROVE_CONFIG_FILE } from "../config.js";
 import { cloneRepos, copyFromSource, patchPorts, runInstalls } from "../setup.js";
+import { expandTilde } from "../paths.js";
+import { regenerateAliases } from "../aliases.js";
 
 interface PlantOptions {
   slot?: string;
@@ -62,11 +64,11 @@ export async function plant(
     process.exit(1);
   }
 
-  // Target path — under config.instancesDir if set (resolved relative to source),
-  // otherwise a sibling of the source. An explicit --path always wins.
+  // Target path — under config.instancesDir if set (resolved relative to source,
+  // with ~ expansion), otherwise a sibling of the source. An explicit --path always wins.
   const repoConfig = loadRepoConfig(proj.source);
   const baseDir = repoConfig?.instancesDir
-    ? path.resolve(proj.source, repoConfig.instancesDir)
+    ? path.resolve(proj.source, expandTilde(repoConfig.instancesDir))
     : path.dirname(proj.source);
   const targetPath = options.path
     ? path.resolve(options.path)
@@ -205,6 +207,7 @@ export async function plant(
     created: new Date().toISOString(),
   });
   saveRegistry(registry);
+  regenerateAliases(registry);
 
   // Structured output for Claude consumption
   const summary = {

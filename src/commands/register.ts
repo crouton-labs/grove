@@ -3,6 +3,7 @@ import fs from "fs";
 import { loadRegistry, saveRegistry } from "../registry.js";
 import { loadRepoConfig, hasSetupScript } from "../config.js";
 import { PortDef } from "../types.js";
+import { regenerateAliases } from "../aliases.js";
 
 interface RegisterOptions {
   name?: string;
@@ -26,6 +27,7 @@ export async function register(projectPath: string, options: RegisterOptions) {
   let initScript: string | undefined = options.init;
   let teardownScript: string | undefined = options.teardown;
   let resolvedName: string | undefined = options.name;
+  let aliases: Record<string, string> | undefined;
 
   if (options.fromConfig) {
     const repoConfig = loadRepoConfig(absPath);
@@ -38,6 +40,7 @@ export async function register(projectPath: string, options: RegisterOptions) {
     if (!resolvedName && repoConfig.name) resolvedName = repoConfig.name;
     if (!teardownScript && repoConfig.teardownScript) teardownScript = repoConfig.teardownScript;
     if (!initScript && hasSetupScript(absPath)) initScript = ".claude/grove/setup.sh";
+    aliases = repoConfig.aliases;
   } else {
     const repoConfig = loadRepoConfig(absPath);
     if (repoConfig && (!options.port || options.port.length === 0)) {
@@ -83,7 +86,9 @@ export async function register(projectPath: string, options: RegisterOptions) {
     Object.assign(existing.ports, ports);
     if (initScript) existing.initScript = initScript;
     if (teardownScript) existing.teardownScript = teardownScript;
+    if (aliases) existing.aliases = aliases;
     saveRegistry(registry);
+    regenerateAliases(registry);
 
     console.log(`Updated project "${name}"`);
     console.log(`  Source: ${absPath}`);
@@ -104,9 +109,11 @@ export async function register(projectPath: string, options: RegisterOptions) {
     teardownScript,
     ports,
     instances: [],
+    aliases,
   };
 
   saveRegistry(registry);
+  regenerateAliases(registry);
 
   console.log(`Registered project "${name}"`);
   console.log(`  Source: ${absPath}`);

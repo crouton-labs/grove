@@ -6,6 +6,7 @@ import { loadRegistry, saveRegistry } from "../registry.js";
 import { computePorts, checkPort } from "../ports.js";
 import { loadRepoConfig } from "../config.js";
 import { stopInstanceServices } from "../process.js";
+import { regenerateAliases } from "../aliases.js";
 
 interface UprootOptions {
   force?: boolean;
@@ -144,6 +145,7 @@ export async function uproot(ref: string, options: UprootOptions) {
   // --- Phase 4: Update registry ---
   proj.instances.splice(idx, 1);
   saveRegistry(registry);
+  regenerateAliases(registry);
 
   console.log(`\nUprooted ${project}/${instanceName}.`);
 
