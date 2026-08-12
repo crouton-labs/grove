@@ -2,7 +2,7 @@ import fs from "fs";
 import path from "path";
 import os from "os";
 import { spawnSync } from "child_process";
-import { GROVE_CONFIG_FILE, isWithinRoot, loadRepoConfig, resolveDevCommand } from "../config.js";
+import { GROVE_CONFIG_FILE, GROVE_CONFIG_EXAMPLE, isWithinRoot, loadRepoConfig, resolveDevCommand } from "../config.js";
 import { groveContextEnv } from "../context.js";
 import { computePorts } from "../ports.js";
 import { loadRegistry } from "../registry.js";
@@ -18,6 +18,27 @@ type DevTarget = {
 export function dev(args: string[]): void {
   try {
     const target = resolveTarget(process.cwd());
+    if (!target) {
+      // Outside any registered root there is no repo CLI to forward to — not
+      // even for -h, since help itself comes from the project's devCommand.
+      // Explain the dispatch contract instead of failing bare; a help request
+      // gets the explanation as its answer (exit 0), anything else errors.
+      const help = args.includes("-h") || args.includes("--help");
+      const out = help ? console.log : console.error;
+      if (!help) out(`Error: current directory is outside a registered project root: ${process.cwd()}`);
+      out(`dev — dispatches to the current project's own development command.
+Inside a registered project, \`dev [args...]\` runs the executable named by
+\`devCommand\` in its ${GROVE_CONFIG_FILE} (so \`dev -h\` shows that project's
+own services and verbs).
+
+This directory is not inside a registered project. To set one up:
+  1. Add ${GROVE_CONFIG_FILE} and the executable it names.
+  2. Run: grove register <project-root>
+
+${GROVE_CONFIG_EXAMPLE}`);
+      process.exitCode = help ? 0 : 1;
+      return;
+    }
     const config = loadRepoConfig(target.root, target.project.configFile ?? GROVE_CONFIG_FILE);
     if (!config?.devCommand) {
       throw new Error(`no devCommand configured for ${target.root}`);
@@ -51,7 +72,7 @@ export function dev(args: string[]): void {
   }
 }
 
-function resolveTarget(cwd: string): DevTarget {
+function resolveTarget(cwd: string): DevTarget | undefined {
   const registry = loadRegistry();
   const resolvedCwd = fs.realpathSync(cwd);
   const candidates: Array<DevTarget & { rootLength: number }> = [];
@@ -64,11 +85,7 @@ function resolveTarget(cwd: string): DevTarget {
   }
 
   candidates.sort((a, b) => b.rootLength - a.rootLength);
-  const match = candidates[0];
-  if (!match) {
-    throw new Error(`current directory is outside a registered project root: ${cwd}`);
-  }
-  return match;
+  return candidates[0];
 }
 
 function addCandidate(

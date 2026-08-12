@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { Command } from "commander";
 import { register } from "./commands/register.js";
+import { GROVE_CONFIG_EXAMPLE } from "./config.js";
 import { dev } from "./commands/dev.js";
 import { plant } from "./commands/plant.js";
 import { uproot } from "./commands/uproot.js";
@@ -52,6 +53,7 @@ program
     "Project config relative to the source root (default: .grove/config.json)",
   )
   .option("--update", "Update existing registration instead of erroring on duplicate")
+  .addHelpText("after", `\n${GROVE_CONFIG_EXAMPLE}\n`)
   .action(register);
 
 program

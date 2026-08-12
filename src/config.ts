@@ -4,6 +4,27 @@ import { PortDef } from "./types.js";
 
 export const GROVE_CONFIG_FILE = ".grove/config.json";
 
+// Shared help text: the minimal .grove/config.json a project needs before
+// `grove register` / `grove dev` can drive it. Shown in `register -h` and
+// when `dev` runs outside any registered project root.
+export const GROVE_CONFIG_EXAMPLE = `A project declares itself in ${GROVE_CONFIG_FILE} at its root:
+
+  {
+    "version": 1,
+    "devCommand": "scripts/dev.sh",
+    "ports": {
+      "app": { "base": 3000, "offset": 100 }
+    }
+  }
+
+version     always 1.
+devCommand  executable path relative to the project root; grove dispatches
+            \`dev [args...]\` to it with cwd at the target root and env
+            GROVE_SLOT, GROVE_SOURCE, GROVE_TARGET, GROVE_INSTANCE_NAME,
+            GROVE_PORTS_JSON, and GROVE_PORT_<NAME> per port.
+ports       one entry per service: an instance in slot N gets base + N * offset
+            (the source checkout is slot 0, so it serves on base).`;
+
 export interface RepoSpec {
   branch?: string;           // default: "main"
   recurseSubmodules?: boolean;
