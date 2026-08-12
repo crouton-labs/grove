@@ -12,11 +12,10 @@ const STAMP = path.join(GROVE_DIR, ".last-update-check");
  * Notify — never auto-install — when a newer grove has been published.
  *
  * Throttled to one registry check per CHECK_INTERVAL_MS. The notice is written
- * to STDERR so stdout stays clean for callers that parse it (e.g. /grove:plant
- * reads a `--- grove-output ---` JSON block from stdout). We deliberately don't
- * run the install ourselves: grove may be installed via npm, pnpm, yarn or bun,
- * and guessing wrong risks a conflicting parallel install. The caller (a human,
- * or Claude, which can inspect the environment) runs the right command.
+ * to STDERR so stdout stays clean for callers that parse the `--- grove-output ---`
+ * JSON block. We deliberately don't run the install ourselves: grove may be
+ * installed via npm, pnpm, yarn or bun, and guessing wrong risks a conflicting
+ * parallel install. The caller chooses the matching command.
  *
  * Best-effort: every failure path (offline, throttle file, parse) is swallowed.
  * Disable with GROVE_NO_UPDATE=1 (also skipped under CI).

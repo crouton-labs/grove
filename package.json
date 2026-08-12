@@ -7,8 +7,7 @@
     "grove": "dist/cli.js"
   },
   "files": [
-    "dist",
-    "commands"
+    "dist"
   ],
   "scripts": {
     "build": "tsc",

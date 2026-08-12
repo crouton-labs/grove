@@ -12,6 +12,7 @@ export interface GroveInstance {
 
 export interface GroveProjectConfig {
   source: string;
+  configFile?: string;
   initScript?: string;
   teardownScript?: string;
   ports: Record<string, PortDef>;

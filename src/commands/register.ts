@@ -1,7 +1,11 @@
 import path from "path";
 import fs from "fs";
 import { loadRegistry, saveRegistry } from "../registry.js";
-import { loadRepoConfig, hasSetupScript } from "../config.js";
+import {
+  GROVE_CONFIG_FILE,
+  loadRepoConfig,
+  normalizeConfigFile,
+} from "../config.js";
 import { PortDef } from "../types.js";
 import { regenerateAliases } from "../aliases.js";
 
@@ -10,7 +14,7 @@ interface RegisterOptions {
   init?: string;
   teardown?: string;
   port?: string[];
-  fromConfig?: boolean;
+  config?: string;
   update?: boolean;
 }
 
@@ -29,25 +33,25 @@ export async function register(projectPath: string, options: RegisterOptions) {
   let resolvedName: string | undefined = options.name;
   let aliases: Record<string, string> | undefined;
 
-  if (options.fromConfig) {
-    const repoConfig = loadRepoConfig(absPath);
-    if (!repoConfig) {
-      console.error(`Error: no ${".claude/grove/config.json"} found at ${absPath}`);
-      process.exit(1);
-    }
+  let configFile: string;
+  let repoConfig: ReturnType<typeof loadRepoConfig>;
+  try {
+    configFile = normalizeConfigFile(options.config ?? GROVE_CONFIG_FILE);
+    repoConfig = loadRepoConfig(absPath, configFile);
+  } catch (error) {
+    console.error(`Error: ${(error as Error).message}`);
+    process.exit(1);
+  }
+  if (options.config && !repoConfig) {
+    console.error(`Error: no ${configFile} found at ${absPath}`);
+    process.exit(1);
+  }
 
+  if (repoConfig) {
     Object.assign(ports, repoConfig.ports);
     if (!resolvedName && repoConfig.name) resolvedName = repoConfig.name;
     if (!teardownScript && repoConfig.teardownScript) teardownScript = repoConfig.teardownScript;
-    if (!initScript && hasSetupScript(absPath)) initScript = ".claude/grove/setup.sh";
     aliases = repoConfig.aliases;
-  } else {
-    const repoConfig = loadRepoConfig(absPath);
-    if (repoConfig && (!options.port || options.port.length === 0)) {
-      console.log(
-        `Hint: Found .claude/grove/config.json — use --from-config to load port definitions from it.`,
-      );
-    }
   }
 
   if (options.port) {
@@ -84,15 +88,27 @@ export async function register(projectPath: string, options: RegisterOptions) {
 
     const existing = registry.projects[name];
     existing.source = absPath; // re-registering from a moved location updates source
-    Object.assign(existing.ports, ports);
-    if (initScript) existing.initScript = initScript;
-    if (teardownScript) existing.teardownScript = teardownScript;
-    if (aliases) existing.aliases = aliases;
+    if (repoConfig) {
+      existing.configFile = configFile;
+      existing.ports = { ...ports };
+      if (initScript) existing.initScript = initScript;
+      else delete existing.initScript;
+      if (teardownScript) existing.teardownScript = teardownScript;
+      else delete existing.teardownScript;
+      if (aliases) existing.aliases = aliases;
+      else delete existing.aliases;
+    } else {
+      Object.assign(existing.ports, ports);
+      if (initScript) existing.initScript = initScript;
+      if (teardownScript) existing.teardownScript = teardownScript;
+      if (aliases) existing.aliases = aliases;
+    }
     saveRegistry(registry);
     regenerateAliases(registry);
 
     console.log(`Updated project "${name}"`);
     console.log(`  Source: ${absPath}`);
+    if (existing.configFile) console.log(`  Config: ${existing.configFile}`);
     if (existing.initScript) console.log(`  Init:   ${existing.initScript}`);
     if (existing.teardownScript) console.log(`  Teardown: ${existing.teardownScript}`);
     if (Object.keys(existing.ports).length) {
@@ -106,6 +122,7 @@ export async function register(projectPath: string, options: RegisterOptions) {
 
   registry.projects[name] = {
     source: absPath,
+    configFile: repoConfig ? configFile : undefined,
     initScript,
     teardownScript,
     ports,
@@ -118,6 +135,7 @@ export async function register(projectPath: string, options: RegisterOptions) {
 
   console.log(`Registered project "${name}"`);
   console.log(`  Source: ${absPath}`);
+  if (repoConfig) console.log(`  Config: ${configFile}`);
   if (initScript) console.log(`  Init:   ${initScript}`);
   if (teardownScript) console.log(`  Teardown: ${teardownScript}`);
   if (Object.keys(ports).length) {

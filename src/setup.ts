@@ -151,12 +151,17 @@ export function cloneRepos(
 // Copy files from source
 // ---------------------------------------------------------------------------
 
+function isSelectedConfig(target: string, filePath: string, configFile: string): boolean {
+  return path.normalize(path.relative(target, filePath)) === path.normalize(configFile);
+}
+
 export function copyFromSource(
   source: string,
   target: string,
   specs: CopyFromSourceSpec[],
   portDefs: Record<string, PortDef>,
   slot: number,
+  configFile = GROVE_CONFIG_FILE,
 ): void {
   for (const spec of specs) {
     const src = path.join(source, spec.from);
@@ -181,9 +186,11 @@ export function copyFromSource(
       if (stat.isDirectory()) {
         const files = walkDir(dest);
         for (const file of files) {
-          patchPortsInFile(file, portDefs, slot);
+          if (!isSelectedConfig(target, file, configFile)) {
+            patchPortsInFile(file, portDefs, slot);
+          }
         }
-      } else {
+      } else if (!isSelectedConfig(target, dest, configFile)) {
         patchPortsInFile(dest, portDefs, slot);
       }
     }
@@ -254,6 +261,7 @@ export function patchPorts(
   globs: string[],
   portDefs: Record<string, PortDef>,
   slot: number,
+  configFile = GROVE_CONFIG_FILE,
 ): void {
   const allFiles = walkDir(target);
   let patchedCount = 0;
@@ -262,7 +270,7 @@ export function patchPorts(
     const rel = path.relative(target, absPath);
 
     // Never patch grove's own config — it stores base port definitions
-    if (rel === GROVE_CONFIG_FILE) continue;
+    if (isSelectedConfig(target, absPath, configFile)) continue;
 
     // Never patch committed env templates — by convention they hold base/
     // placeholder values, so patching them just creates a spurious diff in

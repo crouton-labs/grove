@@ -1,10 +1,9 @@
 import fs from "fs";
-import path from "path";
 import { execSync } from "child_process";
 import readline from "readline";
 import { loadRegistry, saveRegistry } from "../registry.js";
 import { computePorts, checkPort } from "../ports.js";
-import { loadRepoConfig } from "../config.js";
+import { loadRepoConfig, resolveProjectPath } from "../config.js";
 import { stopInstanceServices } from "../process.js";
 import { regenerateAliases } from "../aliases.js";
 
@@ -102,12 +101,12 @@ export async function uproot(ref: string, options: UprootOptions) {
 
   // --- Phase 2: Run teardown script if configured ---
   if (exists) {
-    const repoConfig = loadRepoConfig(instance.path);
+    const repoConfig = loadRepoConfig(instance.path, proj.configFile);
     const teardownScript = repoConfig?.teardownScript ?? proj.teardownScript;
 
     if (teardownScript) {
-      const scriptPath = path.join(instance.path, teardownScript);
-      const fallbackPath = path.join(proj.source, teardownScript);
+      const scriptPath = resolveProjectPath(instance.path, teardownScript);
+      const fallbackPath = resolveProjectPath(proj.source, teardownScript);
       const resolvedPath = fs.existsSync(scriptPath) ? scriptPath : fs.existsSync(fallbackPath) ? fallbackPath : null;
 
       if (resolvedPath) {

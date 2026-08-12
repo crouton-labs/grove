@@ -2,9 +2,7 @@ import path from "path";
 import fs from "fs";
 import { PortDef } from "./types.js";
 
-export const GROVE_CONFIG_DIR = ".claude/grove";
-export const GROVE_CONFIG_FILE = ".claude/grove/config.json";
-export const GROVE_SETUP_FILE = ".claude/grove/setup.sh";
+export const GROVE_CONFIG_FILE = ".grove/config.json";
 
 export interface RepoSpec {
   branch?: string;           // default: "main"
@@ -36,8 +34,50 @@ export interface GroveRepoConfig {
   aliases?: Record<string, string>; // aliasPrefix -> subdir relative to instance root
 }
 
-export function loadRepoConfig(projectPath: string): GroveRepoConfig | null {
-  const configPath = path.join(projectPath, GROVE_CONFIG_FILE);
+export function normalizeConfigFile(configFile = GROVE_CONFIG_FILE): string {
+  if (!configFile.trim()) {
+    throw new Error("grove config path must not be empty");
+  }
+  if (path.isAbsolute(configFile)) {
+    throw new Error("grove config path must be relative to the project source");
+  }
+  const normalized = path.normalize(configFile);
+  if (normalized === ".." || normalized.startsWith(`..${path.sep}`)) {
+    throw new Error("grove config path must stay inside the project source");
+  }
+  return normalized;
+}
+
+function isWithinRoot(root: string, candidate: string): boolean {
+  const relative = path.relative(root, candidate);
+  return relative === "" || (!path.isAbsolute(relative) && relative !== ".." && !relative.startsWith(`..${path.sep}`));
+}
+
+export function resolveProjectPath(projectPath: string, relativePath: string): string {
+  const projectRoot = fs.realpathSync(projectPath);
+  const candidate = path.resolve(projectRoot, relativePath);
+  if (!fs.existsSync(candidate)) return candidate;
+
+  const realCandidate = fs.realpathSync(candidate);
+  if (!isWithinRoot(projectRoot, realCandidate)) {
+    throw new Error("grove config and adjacent scripts must stay inside the project source");
+  }
+  return realCandidate;
+}
+
+export function resolveRepoConfigPath(projectPath: string, configFile = GROVE_CONFIG_FILE): string {
+  return resolveProjectPath(projectPath, normalizeConfigFile(configFile));
+}
+
+export function setupFileForConfig(configFile = GROVE_CONFIG_FILE): string {
+  return path.join(path.dirname(normalizeConfigFile(configFile)), "setup.sh");
+}
+
+export function loadRepoConfig(
+  projectPath: string,
+  configFile = GROVE_CONFIG_FILE,
+): GroveRepoConfig | null {
+  const configPath = resolveRepoConfigPath(projectPath, configFile);
   if (!fs.existsSync(configPath)) return null;
   const raw = JSON.parse(fs.readFileSync(configPath, "utf-8"));
   return validateRepoConfig(raw);
@@ -201,6 +241,9 @@ export function validateRepoConfig(raw: unknown): GroveRepoConfig {
   };
 }
 
-export function hasSetupScript(projectPath: string): boolean {
-  return fs.existsSync(path.join(projectPath, GROVE_SETUP_FILE));
+export function hasSetupScript(
+  projectPath: string,
+  configFile = GROVE_CONFIG_FILE,
+): boolean {
+  return fs.existsSync(resolveProjectPath(projectPath, setupFileForConfig(configFile)));
 }

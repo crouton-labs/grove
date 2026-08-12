@@ -3,7 +3,13 @@ import fs from "fs";
 import { execSync } from "child_process";
 import { loadRegistry, saveRegistry, nextFreeSlot } from "../registry.js";
 import { computePorts } from "../ports.js";
-import { loadRepoConfig, hasSetupScript, GROVE_SETUP_FILE, GROVE_CONFIG_FILE } from "../config.js";
+import {
+  GROVE_CONFIG_FILE,
+  loadRepoConfig,
+  hasSetupScript,
+  resolveProjectPath,
+  setupFileForConfig,
+} from "../config.js";
 import { cloneRepos, copyFromSource, patchPorts, runInstalls } from "../setup.js";
 import { expandTilde } from "../paths.js";
 import { regenerateAliases } from "../aliases.js";
@@ -66,7 +72,8 @@ export async function plant(
 
   // Target path — under config.instancesDir if set (resolved relative to source,
   // with ~ expansion), otherwise a sibling of the source. An explicit --path always wins.
-  const repoConfig = loadRepoConfig(proj.source);
+  const configFile = proj.configFile ?? GROVE_CONFIG_FILE;
+  const repoConfig = loadRepoConfig(proj.source, configFile);
   const baseDir = repoConfig?.instancesDir
     ? path.resolve(proj.source, expandTilde(repoConfig.instancesDir))
     : path.dirname(proj.source);
@@ -96,14 +103,14 @@ export async function plant(
   }
   console.log("");
 
-  const setupScriptExists = hasSetupScript(proj.source);
+  const setupScriptExists = hasSetupScript(proj.source, configFile);
 
   if (repoConfig) {
     const configPortKeys = Object.keys(repoConfig.ports).sort().join(",");
     const registryPortKeys = Object.keys(proj.ports).sort().join(",");
     if (configPortKeys !== registryPortKeys) {
-      console.warn(`Warning: registry ports differ from ${GROVE_CONFIG_FILE}`);
-      console.warn(`Run: grove register "${proj.source}" --from-config --update`);
+      console.warn(`Warning: registry ports differ from ${configFile}`);
+      console.warn(`Run: grove register "${proj.source}" --config "${configFile}" --update`);
     }
   }
 
@@ -112,7 +119,7 @@ export async function plant(
     console.log("Cloning repos...");
     cloneRepos(proj.source, targetPath, repoConfig.repos);
   } else if (proj.initScript) {
-    const scriptPath = path.join(proj.source, proj.initScript);
+    const scriptPath = resolveProjectPath(proj.source, proj.initScript);
     if (!fs.existsSync(scriptPath)) {
       console.error(`Error: init script not found: ${scriptPath}`);
       process.exit(1);
@@ -141,12 +148,19 @@ export async function plant(
   // --- Config-driven setup ---
   if (repoConfig?.copyFromSource) {
     console.log("Copying files from source...");
-    copyFromSource(proj.source, targetPath, repoConfig.copyFromSource, proj.ports, slot);
+    copyFromSource(
+      proj.source,
+      targetPath,
+      repoConfig.copyFromSource,
+      proj.ports,
+      slot,
+      configFile,
+    );
   }
 
   if (repoConfig?.patchPortsIn) {
     console.log("Patching port references...");
-    patchPorts(targetPath, repoConfig.patchPortsIn, proj.ports, slot);
+    patchPorts(targetPath, repoConfig.patchPortsIn, proj.ports, slot, configFile);
   }
 
   if (repoConfig?.install) {
@@ -156,7 +170,7 @@ export async function plant(
 
   // --- setup.sh (runs last for anything config can't express) ---
   if (setupScriptExists) {
-    const setupPath = path.join(targetPath, GROVE_SETUP_FILE);
+    const setupPath = resolveProjectPath(targetPath, setupFileForConfig(configFile));
 
     console.log("Running setup script...");
 
@@ -184,21 +198,6 @@ export async function plant(
     process.exit(1);
   }
 
-  // Symlink grove's plant command into the new instance
-  const groveCommandSrc = path.resolve(
-    new URL("../../commands/plant.md", import.meta.url).pathname,
-  );
-  const claudeCommandsDir = path.join(targetPath, ".claude", "commands");
-  if (fs.existsSync(claudeCommandsDir) && fs.existsSync(groveCommandSrc)) {
-    const symlinkTarget = path.join(claudeCommandsDir, "grove-plant.md");
-    try {
-      fs.unlinkSync(symlinkTarget);
-    } catch {
-      // Doesn't exist yet — fine
-    }
-    fs.symlinkSync(groveCommandSrc, symlinkTarget);
-  }
-
   // Register
   proj.instances.push({
     name,
@@ -209,7 +208,7 @@ export async function plant(
   saveRegistry(registry);
   regenerateAliases(registry);
 
-  // Structured output for Claude consumption
+  // Structured output for automation
   const summary = {
     project,
     instance: name,
