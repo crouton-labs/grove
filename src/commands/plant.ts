@@ -13,6 +13,7 @@ import {
 import { cloneRepos, copyFromSource, patchPorts, runInstalls } from "../setup.js";
 import { expandTilde } from "../paths.js";
 import { regenerateAliases } from "../aliases.js";
+import { groveContextEnv } from "../context.js";
 
 interface PlantOptions {
   slot?: string;
@@ -174,17 +175,13 @@ export async function plant(
 
     console.log("Running setup script...");
 
-    const env: Record<string, string> = {
-      ...(process.env as Record<string, string>),
-      GROVE_SLOT: String(slot),
-      GROVE_SOURCE: proj.source,
-      GROVE_TARGET: targetPath,
-      GROVE_INSTANCE_NAME: name,
-      GROVE_PORTS_JSON: JSON.stringify(ports),
-    };
-    for (const [portName, portValue] of Object.entries(ports)) {
-      env[`GROVE_PORT_${portName.toUpperCase().replace(/-/g, "_")}`] = String(portValue);
-    }
+    const env = groveContextEnv({
+      source: proj.source,
+      target: targetPath,
+      slot,
+      instanceName: name,
+      ports,
+    });
 
     try {
       execSync(`bash "${setupPath}"`, { stdio: "inherit", cwd: targetPath, env });

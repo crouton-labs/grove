@@ -6,6 +6,7 @@ import { computePorts, checkPort } from "../ports.js";
 import { loadRepoConfig, resolveProjectPath } from "../config.js";
 import { stopInstanceServices } from "../process.js";
 import { regenerateAliases } from "../aliases.js";
+import { groveContextEnv } from "../context.js";
 
 interface UprootOptions {
   force?: boolean;
@@ -111,17 +112,13 @@ export async function uproot(ref: string, options: UprootOptions) {
 
       if (resolvedPath) {
         console.log(`\nRunning teardown script: ${teardownScript}`);
-        const env: Record<string, string> = {
-          ...(process.env as Record<string, string>),
-          GROVE_SLOT: String(instance.slot),
-          GROVE_SOURCE: proj.source,
-          GROVE_TARGET: instance.path,
-          GROVE_INSTANCE_NAME: instanceName,
-          GROVE_PORTS_JSON: JSON.stringify(ports),
-        };
-        for (const [portName, portValue] of Object.entries(ports)) {
-          env[`GROVE_PORT_${portName.toUpperCase().replace(/-/g, "_")}`] = String(portValue);
-        }
+        const env = groveContextEnv({
+          source: proj.source,
+          target: instance.path,
+          slot: instance.slot,
+          instanceName,
+          ports,
+        });
         try {
           execSync(`bash "${resolvedPath}"`, {
             stdio: "inherit",

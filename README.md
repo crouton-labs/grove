@@ -30,11 +30,15 @@ A version 1 config can define:
 - `patchPortsIn` globs
 - per-repository `install` commands
 - `teardownScript`
+- `devCommand`, an optional executable path relative to the target root (for example `scripts/dev.sh` or `northlight/scripts/dev.sh`)
+
+`devCommand` must point to an existing regular executable file inside the project root. Grove validates it during registration, doctor checks, and dispatch; it does not guess a script path.
 
 ## Commands
 
 ```bash
 grove register <source> [--config <relative-path>] [--update]
+grove dev [raw argv...]
 grove plant <project> [name] [--slot <n>]
 grove adopt <project> <name> <path> [--slot <n>]
 grove list [project]
@@ -42,6 +46,8 @@ grove doctor [project]
 grove uproot <project/name> [--force]
 ```
 
+`grove dev` resolves the current directory to the longest containing registered source or instance, then directly runs that target's configured `devCommand`. Arguments are forwarded unchanged, and Grove supplies `GROVE_SOURCE`, `GROVE_TARGET`, `GROVE_SLOT`, `GROVE_INSTANCE_NAME`, `GROVE_PORTS_JSON`, and `GROVE_PORT_<NAME>` environment variables.
+
 `grove plant` prints a `--- grove-output ---` JSON block for callers that need the created path, slot, and ports.
 
-Grove does not infer a moved config path. Re-run `grove register <source> --config <relative-path> --update`; config-backed re-registration replaces stored ports, aliases, init, and teardown values.
+Grove does not infer a moved config path. Re-run `grove register <source> --config <relative-path> --update`; config-backed re-registration replaces stored ports, aliases, init, teardown, and development-command values.

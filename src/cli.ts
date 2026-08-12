@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { Command } from "commander";
 import { register } from "./commands/register.js";
+import { dev } from "./commands/dev.js";
 import { plant } from "./commands/plant.js";
 import { uproot } from "./commands/uproot.js";
 import { list } from "./commands/list.js";
@@ -24,6 +25,14 @@ program
   .name("grove")
   .description("Parallel project instance manager")
   .version(version);
+
+program
+  .command("dev [args...]")
+  .description("Dispatch the registered project's development command")
+  .helpOption(false)
+  .allowUnknownOption()
+  .allowExcessArguments()
+  .action((args: string[]) => dev(args));
 
 program
   .command("register <path>")

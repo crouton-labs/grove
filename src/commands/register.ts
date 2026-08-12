@@ -5,6 +5,7 @@ import {
   GROVE_CONFIG_FILE,
   loadRepoConfig,
   normalizeConfigFile,
+  resolveDevCommand,
 } from "../config.js";
 import { PortDef } from "../types.js";
 import { regenerateAliases } from "../aliases.js";
@@ -45,6 +46,15 @@ export async function register(projectPath: string, options: RegisterOptions) {
   if (options.config && !repoConfig) {
     console.error(`Error: no ${configFile} found at ${absPath}`);
     process.exit(1);
+  }
+
+  if (repoConfig?.devCommand) {
+    try {
+      resolveDevCommand(absPath, repoConfig.devCommand);
+    } catch (error) {
+      console.error(`Error: ${(error as Error).message}`);
+      process.exit(1);
+    }
   }
 
   if (repoConfig) {
@@ -111,6 +121,7 @@ export async function register(projectPath: string, options: RegisterOptions) {
     if (existing.configFile) console.log(`  Config: ${existing.configFile}`);
     if (existing.initScript) console.log(`  Init:   ${existing.initScript}`);
     if (existing.teardownScript) console.log(`  Teardown: ${existing.teardownScript}`);
+    if (repoConfig?.devCommand) console.log(`  Dev:    ${repoConfig.devCommand}`);
     if (Object.keys(existing.ports).length) {
       console.log(`  Ports:`);
       for (const [n, p] of Object.entries(existing.ports)) {
@@ -138,6 +149,7 @@ export async function register(projectPath: string, options: RegisterOptions) {
   if (repoConfig) console.log(`  Config: ${configFile}`);
   if (initScript) console.log(`  Init:   ${initScript}`);
   if (teardownScript) console.log(`  Teardown: ${teardownScript}`);
+  if (repoConfig?.devCommand) console.log(`  Dev:    ${repoConfig.devCommand}`);
   if (Object.keys(ports).length) {
     console.log(`  Ports:`);
     for (const [n, p] of Object.entries(ports)) {

@@ -27,6 +27,7 @@ export interface GroveRepoConfig {
   ports: Record<string, PortDef>;
   excludes?: string[];
   teardownScript?: string;
+  devCommand?: string;        // target-root-relative executable for `grove dev`
   repos?: Record<string, RepoSpec>;
   copyFromSource?: CopyFromSourceSpec[];
   patchPortsIn?: string[];   // glob patterns relative to target
@@ -48,7 +49,7 @@ export function normalizeConfigFile(configFile = GROVE_CONFIG_FILE): string {
   return normalized;
 }
 
-function isWithinRoot(root: string, candidate: string): boolean {
+export function isWithinRoot(root: string, candidate: string): boolean {
   const relative = path.relative(root, candidate);
   return relative === "" || (!path.isAbsolute(relative) && relative !== ".." && !relative.startsWith(`..${path.sep}`));
 }
@@ -67,6 +68,37 @@ export function resolveProjectPath(projectPath: string, relativePath: string): s
 
 export function resolveRepoConfigPath(projectPath: string, configFile = GROVE_CONFIG_FILE): string {
   return resolveProjectPath(projectPath, normalizeConfigFile(configFile));
+}
+
+/** Resolve and validate the configured development executable for a target root. */
+export function resolveDevCommand(projectRoot: string, devCommand: string): string {
+  if (!devCommand.trim() || path.isAbsolute(devCommand)) {
+    throw new Error("grove config devCommand must be a non-empty path relative to the project root");
+  }
+
+  const root = fs.realpathSync(projectRoot);
+  const candidate = path.resolve(root, devCommand);
+  if (!isWithinRoot(root, candidate)) {
+    throw new Error("grove config devCommand must stay inside the project root");
+  }
+  if (!fs.existsSync(candidate)) {
+    throw new Error(`grove config devCommand does not exist: ${devCommand}`);
+  }
+
+  const resolved = fs.realpathSync(candidate);
+  if (!isWithinRoot(root, resolved)) {
+    throw new Error("grove config devCommand must stay inside the project root");
+  }
+  const stat = fs.statSync(resolved);
+  if (!stat.isFile()) {
+    throw new Error(`grove config devCommand is not a regular file: ${devCommand}`);
+  }
+  try {
+    fs.accessSync(resolved, fs.constants.X_OK);
+  } catch {
+    throw new Error(`grove config devCommand is not executable: ${devCommand}`);
+  }
+  return resolved;
 }
 
 export function setupFileForConfig(configFile = GROVE_CONFIG_FILE): string {
@@ -127,6 +159,15 @@ export function validateRepoConfig(raw: unknown): GroveRepoConfig {
   }
   if (obj.teardownScript !== undefined && typeof obj.teardownScript !== "string") {
     throw new Error("grove config teardownScript must be a string");
+  }
+  if (obj.devCommand !== undefined) {
+    if (typeof obj.devCommand !== "string") {
+      throw new Error("grove config devCommand must be a string");
+    }
+    const normalizedDevCommand = path.normalize(obj.devCommand);
+    if (!obj.devCommand.trim() || path.isAbsolute(obj.devCommand) || normalizedDevCommand === ".." || normalizedDevCommand.startsWith(`..${path.sep}`)) {
+      throw new Error("grove config devCommand must be a non-empty path relative to the project root");
+    }
   }
   // Validate aliases
   let aliases: Record<string, string> | undefined;
@@ -233,6 +274,7 @@ export function validateRepoConfig(raw: unknown): GroveRepoConfig {
     ports,
     excludes: obj.excludes as string[] | undefined,
     teardownScript: obj.teardownScript as string | undefined,
+    devCommand: obj.devCommand as string | undefined,
     repos,
     copyFromSource,
     patchPortsIn: obj.patchPortsIn as string[] | undefined,

@@ -2,6 +2,8 @@ import fs from "fs";
 import { loadRegistry, saveRegistry } from "../registry.js";
 import { computePorts } from "../ports.js";
 import { stopInstanceServices } from "../process.js";
+import { GROVE_CONFIG_FILE, loadRepoConfig, resolveDevCommand } from "../config.js";
+import type { GroveProjectConfig } from "../types.js";
 
 export async function doctor(project?: string) {
   const registry = loadRegistry();
@@ -27,6 +29,7 @@ export async function doctor(project?: string) {
       console.log(`  \x1b[33m⚠\x1b[0m Source missing: ${proj.source}`);
     } else {
       console.log(`  \x1b[32m✓\x1b[0m Source: ${proj.source}`);
+      reportDevCommand(proj, proj.source, "source");
     }
 
     const zombieIdxs: number[] = [];
@@ -34,6 +37,7 @@ export async function doctor(project?: string) {
       const inst = proj.instances[i];
       if (fs.existsSync(inst.path)) {
         console.log(`  \x1b[32m✓\x1b[0m ${inst.name} → ${inst.path}`);
+        reportDevCommand(proj, inst.path, inst.name);
       } else {
         console.log(
           `  \x1b[31m✗\x1b[0m ${inst.name} → ${inst.path} (zombie)`,
@@ -69,5 +73,27 @@ export async function doctor(project?: string) {
     console.log(`\nFixed ${totalFixed} issue(s).`);
   } else {
     console.log("\nAll clear.");
+  }
+}
+
+function reportDevCommand(project: GroveProjectConfig, root: string, label: string): void {
+  let config;
+  try {
+    config = loadRepoConfig(root, project.configFile ?? GROVE_CONFIG_FILE);
+  } catch (error) {
+    console.log(`  \x1b[31m✗\x1b[0m ${label} devCommand: ${(error as Error).message}`);
+    return;
+  }
+
+  if (!config?.devCommand) {
+    console.log(`  \x1b[33m⚠\x1b[0m ${label} devCommand: not configured`);
+    return;
+  }
+
+  try {
+    resolveDevCommand(root, config.devCommand);
+    console.log(`  \x1b[32m✓\x1b[0m ${label} devCommand: ${config.devCommand}`);
+  } catch (error) {
+    console.log(`  \x1b[31m✗\x1b[0m ${label} devCommand: ${(error as Error).message}`);
   }
 }
