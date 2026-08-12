@@ -8,6 +8,7 @@ import type { GroveProjectConfig } from "../types.js";
 export async function doctor(project?: string) {
   const registry = loadRegistry();
   let totalFixed = 0;
+  let failures = 0;
 
   const names = project ? [project] : Object.keys(registry.projects);
 
@@ -29,7 +30,7 @@ export async function doctor(project?: string) {
       console.log(`  \x1b[33m⚠\x1b[0m Source missing: ${proj.source}`);
     } else {
       console.log(`  \x1b[32m✓\x1b[0m Source: ${proj.source}`);
-      reportDevCommand(proj, proj.source, "source");
+      if (!reportDevCommand(proj, proj.source, "source")) failures++;
     }
 
     const zombieIdxs: number[] = [];
@@ -37,7 +38,7 @@ export async function doctor(project?: string) {
       const inst = proj.instances[i];
       if (fs.existsSync(inst.path)) {
         console.log(`  \x1b[32m✓\x1b[0m ${inst.name} → ${inst.path}`);
-        reportDevCommand(proj, inst.path, inst.name);
+        if (!reportDevCommand(proj, inst.path, inst.name)) failures++;
       } else {
         console.log(
           `  \x1b[31m✗\x1b[0m ${inst.name} → ${inst.path} (zombie)`,
@@ -71,29 +72,32 @@ export async function doctor(project?: string) {
   if (totalFixed > 0) {
     saveRegistry(registry);
     console.log(`\nFixed ${totalFixed} issue(s).`);
-  } else {
+  }
+  if (failures > 0) {
+    console.log(`\nFound ${failures} issue(s).`);
+    process.exitCode = 1;
+  } else if (totalFixed === 0) {
     console.log("\nAll clear.");
   }
 }
 
-function reportDevCommand(project: GroveProjectConfig, root: string, label: string): void {
+function reportDevCommand(project: GroveProjectConfig, root: string, label: string): boolean {
   let config;
   try {
     config = loadRepoConfig(root, project.configFile ?? GROVE_CONFIG_FILE);
   } catch (error) {
     console.log(`  \x1b[31m✗\x1b[0m ${label} devCommand: ${(error as Error).message}`);
-    return;
+    return false;
   }
 
-  if (!config?.devCommand) {
-    console.log(`  \x1b[33m⚠\x1b[0m ${label} devCommand: not configured`);
-    return;
-  }
+  if (!config?.devCommand) return true;
 
   try {
     resolveDevCommand(root, config.devCommand);
     console.log(`  \x1b[32m✓\x1b[0m ${label} devCommand: ${config.devCommand}`);
+    return true;
   } catch (error) {
     console.log(`  \x1b[31m✗\x1b[0m ${label} devCommand: ${(error as Error).message}`);
+    return false;
   }
 }

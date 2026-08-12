@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import os from "os";
 import { spawnSync } from "child_process";
 import { GROVE_CONFIG_FILE, isWithinRoot, loadRepoConfig, resolveDevCommand } from "../config.js";
 import { groveContextEnv } from "../context.js";
@@ -39,6 +40,10 @@ export function dev(args: string[]): void {
     });
 
     if (result.error) throw new Error(`failed to run devCommand: ${result.error.message}`);
+    if (result.signal) {
+      process.exitCode = 128 + os.constants.signals[result.signal];
+      return;
+    }
     process.exitCode = result.status ?? 1;
   } catch (error) {
     console.error(`Error: ${(error as Error).message}`);

@@ -83,4 +83,9 @@ program
   .description("Validate registry, prune zombie instances")
   .action(doctor);
 
-program.parse();
+// `dev` is a raw forwarding boundary: Commander must never parse its tail.
+if (process.argv[2] === "dev") {
+  dev(process.argv.slice(3));
+} else {
+  program.parse();
+}
