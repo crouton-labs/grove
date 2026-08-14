@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { Command } from "commander";
 import { register } from "./commands/register.js";
+import { setup } from "./commands/setup.js";
 import { GROVE_CONFIG_EXAMPLE, GROVE_CONFIG_FILE } from "./config.js";
 import { dev } from "./commands/dev.js";
 import { plant } from "./commands/plant.js";
@@ -37,6 +38,24 @@ program
   .allowUnknownOption()
   .allowExcessArguments()
   .action((args: string[]) => dev(args));
+
+const SETUP_HELP = `Repository contract
+
+Setup requires ${GROVE_CONFIG_FILE} at the source repository root. Grove validates it but never creates or overwrites repository config or lifecycle files.
+
+${GROVE_CONFIG_EXAMPLE}
+
+Machine registration
+
+Setup creates a missing registration, preserves an exact one, and only reconciles a registration that already matches the lifecycle contract but lacks its ${GROVE_CONFIG_FILE} pointer. A different source, config path, ports, aliases, teardown script, or legacy init script is consequential; use \`register --update\` explicitly.
+
+Setup refuses a planted instance and names its source root. It finishes with the same health validation as \`grove doctor\` and reports Repository, Machine, and Health separately.`;
+
+program
+  .command("setup [path]")
+  .description("Validate a source repository and register it on this machine")
+  .addHelpText("after", `\n${SETUP_HELP}\n`)
+  .action(setup);
 
 program
   .command("register <path>")

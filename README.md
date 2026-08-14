@@ -12,7 +12,7 @@ pnpm dev -- --help
 
 ## Project configuration
 
-`grove register` reads `.grove/config.json` by default. Composite workspaces can keep the definition in their owning repository and pass its path relative to the registered source root:
+`grove setup` reads `.grove/config.json` at a source repository root, validates its contract, and converges the machine registration without authoring repository files. `grove register` remains the lower-level primitive for custom or explicit registration updates. Composite workspaces can keep the definition in their owning repository and pass its path relative to the registered source root:
 
 ```bash
 grove register /path/to/workspace --config northlight/.grove/config.json
@@ -81,6 +81,7 @@ Snapshots live in `~/.grove/states/<project>/<name>/`, holding `meta.json` and w
 ## Commands
 
 ```bash
+grove setup [source]
 grove register <source> [--config <relative-path>] [--update]
 grove dev [raw argv...]
 grove plant <project> [name] [--slot <n>] [--code-from <mode>] [--from <ref>] [--ignore-fingerprint]
