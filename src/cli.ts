@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { Command } from "commander";
 import { register } from "./commands/register.js";
-import { GROVE_CONFIG_EXAMPLE } from "./config.js";
+import { GROVE_CONFIG_EXAMPLE, GROVE_CONFIG_FILE } from "./config.js";
 import { dev } from "./commands/dev.js";
 import { plant } from "./commands/plant.js";
 import { uproot } from "./commands/uproot.js";
@@ -59,6 +59,15 @@ program
   .addHelpText("after", `\n${GROVE_CONFIG_EXAMPLE}\n`)
   .action(register);
 
+const CODE_GRAMMAR = `--code-from picks the code a new instance starts from:
+  configured    each repo's branch from ${GROVE_CONFIG_FILE} (the default)
+  @source       each source repo's exact current commit, including commits
+                that were never pushed; refuses if any source repo is dirty
+
+Code and state are independent: \`--code-from @source --from @source\` is the
+current checkout with its current data, while a bare \`plant\` is the configured
+branches at the baseline state.`;
+
 const REF_GRAMMAR = `A state ref is one of:
   baseline      the project's own empty/migrated baseline (the default)
   @<instance>   captured live from that instance; @source means the project source
@@ -72,9 +81,10 @@ program
   .description("Create a new project instance (name defaults to the slot number)")
   .option("--slot <n>", "Slot number (auto-assigned if omitted)")
   .option("--path <path>", "Custom target path (default: sibling to source)")
+  .option("--code-from <mode>", "Code to start from: configured | @source (default: configured)")
   .option("--from <ref>", "State to start from (default: baseline)")
   .option("--ignore-fingerprint", "Restore even when the captured schema differs")
-  .addHelpText("after", `\n${REF_GRAMMAR}\n`)
+  .addHelpText("after", `\n${CODE_GRAMMAR}\n\n${REF_GRAMMAR}\n`)
   .action(plant);
 
 program

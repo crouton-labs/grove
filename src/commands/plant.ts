@@ -10,7 +10,18 @@ import {
   resolveProjectPath,
   setupFileForConfig,
 } from "../config.js";
-import { cloneRepos, copyFromSource, patchPorts, runInstalls, runSecrets } from "../setup.js";
+import {
+  cloneRepos,
+  cloneReposFromSource,
+  copyFromSource,
+  describeClonedRepos,
+  patchPorts,
+  resolveSourceCommits,
+  runInstalls,
+  runSecrets,
+  type CodeSource,
+  type SourceRepoCommit,
+} from "../setup.js";
 import { expandTilde } from "../paths.js";
 import { regenerateAliases } from "../aliases.js";
 import { groveContextEnv } from "../context.js";
@@ -28,6 +39,7 @@ import type { GroveInstance } from "../types.js";
 interface PlantOptions {
   slot?: string;
   path?: string;
+  codeFrom?: string;
   from?: string;
   ignoreFingerprint?: boolean;
 }
@@ -37,6 +49,14 @@ export async function plant(
   name: string | undefined,
   options: PlantOptions,
 ) {
+  const codeFrom = (options.codeFrom ?? "configured") as CodeSource;
+  if (codeFrom !== "configured" && codeFrom !== "@source") {
+    console.error(
+      `Error: --code-from must be "configured" or "@source", got "${options.codeFrom}".`,
+    );
+    process.exit(1);
+  }
+
   const registry = loadRegistry();
   const proj = registry.projects[project];
 
@@ -121,9 +141,32 @@ export async function plant(
     process.exit(1);
   }
 
+  // Same reason as the ref: a dirty source repo must stop the plant now, not
+  // after a full clone-and-install.
+  let sourceCommits: Record<string, SourceRepoCommit> | undefined;
+  if (codeFrom === "@source") {
+    if (!repoConfig?.repos) {
+      console.error(
+        `Error: --code-from @source needs a repos map in ${configFile}; this project copies its source directly.`,
+      );
+      process.exit(1);
+    }
+    try {
+      sourceCommits = resolveSourceCommits(proj.source, repoConfig.repos);
+    } catch (error) {
+      console.error(`Error: ${(error as Error).message}`);
+      process.exit(1);
+    }
+  }
+
   console.log(`Planting ${project}/${name} (slot ${slot})`);
   console.log(`  Source: ${proj.source}`);
   console.log(`  Target: ${targetPath}`);
+  if (repoConfig?.repos) {
+    console.log(
+      `  Code:   ${codeFrom === "@source" ? "source checkout commits" : "configured branches"}`,
+    );
+  }
   if (Object.keys(ports).length) {
     console.log(`  Ports:`);
     for (const [svc, port] of Object.entries(ports)) {
@@ -144,7 +187,10 @@ export async function plant(
   }
 
   // --- Copy phase ---
-  if (repoConfig?.repos) {
+  if (repoConfig?.repos && sourceCommits) {
+    console.log("Cloning repos at source commits...");
+    cloneReposFromSource(targetPath, repoConfig.repos, sourceCommits);
+  } else if (repoConfig?.repos) {
     console.log("Cloning repos...");
     cloneRepos(proj.source, targetPath, repoConfig.repos);
   } else if (proj.initScript) {
@@ -293,6 +339,9 @@ export async function plant(
     target: targetPath,
     ports,
     from: stateConfigured && stateRef ? (options.from ?? BASELINE_REF) : null,
+    code: repoConfig?.repos
+      ? { mode: codeFrom, repos: describeClonedRepos(targetPath, repoConfig.repos) }
+      : null,
   };
 
   console.log("");
