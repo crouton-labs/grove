@@ -20,8 +20,10 @@ import {
   describeRef,
   hasStateCommand,
   resolveRef,
+  sourceContext,
   type StateRef,
 } from "../state.js";
+import type { GroveInstance } from "../types.js";
 
 interface PlantOptions {
   slot?: string;
@@ -110,6 +112,12 @@ export async function plant(
     stateRef = resolveRef(project, proj, options.from ?? BASELINE_REF);
   } catch (error) {
     console.error(`Error: ${(error as Error).message}`);
+    process.exit(1);
+  }
+  if (options.from && !hasStateCommand(proj, sourceContext(proj, project))) {
+    console.error(
+      `Error: --from ${options.from} was given but ${configFile} has no stateCommand.`,
+    );
     process.exit(1);
   }
 
@@ -236,9 +244,27 @@ export async function plant(
     ports,
   };
   const stateConfigured = hasStateCommand(proj, stateContext);
+  const pendingRef =
+    stateConfigured && stateRef ? (options.from ?? BASELINE_REF) : undefined;
+
+  // Register before state runs: the checkout took minutes to build, so a
+  // fingerprint refusal or an interrupted restore must leave a named instance
+  // `grove restore` can repair and `grove uproot` can remove — not an orphan
+  // directory. needsState is what marks it unusable until state lands.
+  const instance: GroveInstance = {
+    name,
+    path: targetPath,
+    slot,
+    created: new Date().toISOString(),
+  };
+  if (pendingRef) instance.needsState = pendingRef;
+  proj.instances.push(instance);
+  saveRegistry(registry);
+  regenerateAliases(registry);
+
   if (!stateConfigured && options.from) {
     console.error(
-      `Error: --from ${options.from} was given but ${configFile} has no stateCommand.`,
+      `Error: --from ${options.from} was given but ${configFile} has no stateCommand in the planted checkout.`,
     );
     process.exit(1);
   }
@@ -248,22 +274,15 @@ export async function plant(
       applyRef(proj, stateRef, stateContext, options.ignoreFingerprint === true);
     } catch (error) {
       console.error(`Error: ${(error as Error).message}`);
-      console.error(
-        `The instance exists at ${targetPath} but is unregistered. Remove it, or re-run state setup by hand.`,
-      );
+      console.error("");
+      console.error(`${project}/${name} is registered but its state was not applied.`);
+      console.error(`  Repair: grove restore ${project}/${name} ${pendingRef}`);
+      console.error(`  Remove: grove uproot ${project}/${name}`);
       process.exit(1);
     }
+    delete instance.needsState;
+    saveRegistry(registry);
   }
-
-  // Register
-  proj.instances.push({
-    name,
-    path: targetPath,
-    slot,
-    created: new Date().toISOString(),
-  });
-  saveRegistry(registry);
-  regenerateAliases(registry);
 
   // Structured output for automation
   const summary = {

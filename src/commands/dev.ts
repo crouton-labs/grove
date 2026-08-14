@@ -6,6 +6,7 @@ import { GROVE_CONFIG_FILE, GROVE_CONFIG_EXAMPLE, isWithinRoot, loadRepoConfig, 
 import { groveContextEnv } from "../context.js";
 import { computePorts } from "../ports.js";
 import { loadRegistry } from "../registry.js";
+import { stateNotAppliedError } from "../state.js";
 import type { GroveProjectConfig, GroveInstance } from "../types.js";
 
 type DevTarget = {
@@ -39,6 +40,10 @@ ${GROVE_CONFIG_EXAMPLE}`);
       process.exitCode = help ? 0 : 1;
       return;
     }
+    if (target.instance?.needsState) {
+      throw new Error(stateNotAppliedError(target.projectName, target.instance));
+    }
+
     const config = loadRepoConfig(target.root, target.project.configFile ?? GROVE_CONFIG_FILE);
     if (!config?.devCommand) {
       throw new Error(`no devCommand configured for ${target.root}`);

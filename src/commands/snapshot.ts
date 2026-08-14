@@ -1,5 +1,12 @@
 import { loadRegistry } from "../registry.js";
-import { formatBytes, instanceContext, parseInstanceRef, writeSnapshot } from "../state.js";
+import {
+  findInstance,
+  formatBytes,
+  instanceContext,
+  parseInstanceRef,
+  stateNotAppliedError,
+  writeSnapshot,
+} from "../state.js";
 
 interface SnapshotOptions {
   force?: boolean;
@@ -12,6 +19,11 @@ export async function snapshot(ref: string, name: string, options: SnapshotOptio
     const project = registry.projects[projectName];
     if (!project) {
       throw new Error(`project "${projectName}" not registered`);
+    }
+
+    const instance = findInstance(project, projectName, instanceName);
+    if (instance.needsState) {
+      throw new Error(stateNotAppliedError(projectName, instance));
     }
 
     const context = instanceContext(project, projectName, instanceName);

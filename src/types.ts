@@ -8,6 +8,11 @@ export interface GroveInstance {
   path: string;
   slot: number;
   created: string;
+  /**
+   * The state ref plant registered but has not applied. Present only while an
+   * instance exists without its data state; a successful restore clears it.
+   */
+  needsState?: string;
 }
 
 export interface GroveProjectConfig {

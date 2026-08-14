@@ -45,6 +45,12 @@ export async function list(project?: string) {
         `  \x1b[32m●\x1b[0m ${inst.name} \x1b[90m(slot ${inst.slot})\x1b[0m ${inst.path}`,
       );
 
+      if (inst.needsState) {
+        console.log(
+          `    \x1b[33mstate not applied\x1b[0m — grove restore ${name}/${inst.name} ${inst.needsState}`,
+        );
+      }
+
       // Port health
       const portDefs = proj.ports;
       if (Object.keys(portDefs).length) {

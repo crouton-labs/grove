@@ -6,7 +6,7 @@ import { GROVE_DIR } from "./registry.js";
 import { GROVE_CONFIG_FILE, loadRepoConfig, resolveStateCommand } from "./config.js";
 import { groveContextEnv, GroveExecutionContext } from "./context.js";
 import { computePorts } from "./ports.js";
-import type { GroveProjectConfig } from "./types.js";
+import type { GroveInstance, GroveProjectConfig } from "./types.js";
 
 export const STATES_DIR = path.join(GROVE_DIR, "states");
 export const BASELINE_REF = "baseline";
@@ -58,12 +58,12 @@ export function sourceContext(
   };
 }
 
-/** Context for a registered instance, by name. Throws with the instance list when unknown. */
-export function instanceContext(
+/** Look up a registered instance, throwing with the instance list when unknown. */
+export function findInstance(
   project: GroveProjectConfig,
   projectName: string,
   instanceName: string,
-): GroveExecutionContext {
+): GroveInstance {
   const instance = project.instances.find((i) => i.name === instanceName);
   if (!instance) {
     const known = project.instances.map((i) => `${projectName}/${i.name}`).join(", ");
@@ -72,6 +72,31 @@ export function instanceContext(
         (known ? `. Instances: ${known}` : ""),
     );
   }
+  return instance;
+}
+
+/**
+ * Why an instance carrying `needsState` must not be used yet, and the one
+ * command that repairs it.
+ */
+export function stateNotAppliedError(
+  projectName: string,
+  instance: GroveInstance,
+): string {
+  return (
+    `${projectName}/${instance.name} was planted but its state was never applied. ` +
+    `Repair it with: grove restore ${projectName}/${instance.name} ${instance.needsState}` +
+    ` (or remove it with: grove uproot ${projectName}/${instance.name})`
+  );
+}
+
+/** Context for a registered instance, by name. Throws with the instance list when unknown. */
+export function instanceContext(
+  project: GroveProjectConfig,
+  projectName: string,
+  instanceName: string,
+): GroveExecutionContext {
+  const instance = findInstance(project, projectName, instanceName);
   return {
     source: project.source,
     target: instance.path,

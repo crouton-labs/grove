@@ -43,6 +43,12 @@ export async function doctor(project?: string) {
       const inst = proj.instances[i];
       if (fs.existsSync(inst.path)) {
         console.log(`  \x1b[32m✓\x1b[0m ${inst.name} → ${inst.path}`);
+        if (inst.needsState) {
+          console.log(
+            `    \x1b[33m⚠\x1b[0m state not applied — grove restore ${name}/${inst.name} ${inst.needsState}`,
+          );
+          failures++;
+        }
         if (!reportCommands(proj, inst.path, inst.name)) failures++;
       } else {
         console.log(

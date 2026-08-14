@@ -1,6 +1,13 @@
-import { loadRegistry } from "../registry.js";
+import { loadRegistry, saveRegistry } from "../registry.js";
 import { confirm } from "../prompt.js";
-import { applyRef, describeRef, instanceContext, parseInstanceRef, resolveRef } from "../state.js";
+import {
+  applyRef,
+  describeRef,
+  findInstance,
+  instanceContext,
+  parseInstanceRef,
+  resolveRef,
+} from "../state.js";
 
 interface RestoreOptions {
   force?: boolean;
@@ -16,6 +23,7 @@ export async function restore(instanceRef: string, stateRef: string, options: Re
       throw new Error(`project "${projectName}" not registered`);
     }
 
+    const instance = findInstance(project, projectName, instanceName);
     const dest = instanceContext(project, projectName, instanceName);
     const ref = resolveRef(projectName, project, stateRef);
 
@@ -43,6 +51,11 @@ export async function restore(instanceRef: string, stateRef: string, options: Re
 
     console.log("");
     applyRef(project, ref, dest, options.ignoreFingerprint === true);
+
+    if (instance.needsState) {
+      delete instance.needsState;
+      saveRegistry(registry);
+    }
 
     console.log("");
     console.log(`Restored ${projectName}/${instanceName} from ${describeRef(ref)}.`);
