@@ -44,6 +44,17 @@ A version 1 config can define:
 ]
 ```
 
+## Code
+
+An instance's code and its data state are separate choices. `plant --code-from` picks the code:
+
+- `configured` (the default) clones each repo's branch from the project config, so a plain `grove plant` is reproducible no matter what the source checkout is doing
+- `@source` clones each source repo at its exact current commit, including commits that were never pushed, and keeps the real remote as `origin`
+
+`--code-from @source` refuses before any filesystem work when a source repo is dirty, missing, or cannot resolve `HEAD` — a half-source, half-configured instance is worse than being asked to commit first. It applies only to projects that declare `repos`; a project grove copies wholesale already gets the source tree.
+
+The two intentional launches are `grove plant <project> onboarding` — configured branches at the baseline state, both defaults — and `grove plant <project> feature --code-from @source --from @source`, the code and data you are working on right now.
+
 ## State
 
 Ports, namespaces, and env files are an instance's identity; its database contents are state. `stateCommand` lets a project choose what state a new instance starts from and return a live instance to a known one. Grove owns the store, the ref grammar, and the schema gate; the project owns what its state actually is.
@@ -72,7 +83,7 @@ Snapshots live in `~/.grove/states/<project>/<name>/`, holding `meta.json` and w
 ```bash
 grove register <source> [--config <relative-path>] [--update]
 grove dev [raw argv...]
-grove plant <project> [name] [--slot <n>] [--from <ref>] [--ignore-fingerprint]
+grove plant <project> [name] [--slot <n>] [--code-from <mode>] [--from <ref>] [--ignore-fingerprint]
 grove adopt <project> <name> <path> [--slot <n>]
 grove list [project]
 grove doctor [project]
@@ -86,6 +97,8 @@ grove states [project] [--rm <name>]
 
 `grove dev` resolves the current directory to the longest containing registered source or instance, then directly runs that target's configured `devCommand`. Arguments are forwarded unchanged, and Grove supplies `GROVE_SOURCE`, `GROVE_TARGET`, `GROVE_SLOT`, `GROVE_INSTANCE_NAME`, `GROVE_PORTS_JSON`, and `GROVE_PORT_<NAME>` environment variables.
 
-`grove plant` prints a `--- grove-output ---` JSON block for callers that need the created path, slot, and ports.
+`grove plant` prints a `--- grove-output ---` JSON block for callers that need the created path, slot, ports, state ref, and the branch and commit each repo landed on.
+
+An instance is registered once its checkout is built, before its state is applied, so a state failure leaves a named instance rather than an orphan directory. Until state lands, `grove list` and `grove doctor` mark it `state not applied`, `grove dev` and `grove snapshot` refuse and name the restore command, and a successful `grove restore` clears it.
 
 Grove does not infer a moved config path. Re-run `grove register <source> --config <relative-path> --update`; config-backed re-registration replaces stored ports, aliases, init, teardown, and development-command values.
