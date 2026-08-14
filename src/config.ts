@@ -17,13 +17,20 @@ export const GROVE_CONFIG_EXAMPLE = `A project declares itself in ${GROVE_CONFIG
     }
   }
 
-version     always 1.
-devCommand  executable path relative to the project root; grove dispatches
-            \`dev [args...]\` to it with cwd at the target root and env
-            GROVE_SLOT, GROVE_SOURCE, GROVE_TARGET, GROVE_INSTANCE_NAME,
-            GROVE_PORTS_JSON, and GROVE_PORT_<NAME> per port.
-ports       one entry per service: an instance in slot N gets base + N * offset
-            (the source checkout is slot 0, so it serves on base).`;
+version      always 1.
+devCommand   executable path relative to the project root; grove dispatches
+             \`dev [args...]\` to it with cwd at the target root and env
+             GROVE_SLOT, GROVE_SOURCE, GROVE_TARGET, GROVE_INSTANCE_NAME,
+             GROVE_PORTS_JSON, and GROVE_PORT_<NAME> per port.
+ports        one entry per service: an instance in slot N gets base + N * offset
+             (the source checkout is slot 0, so it serves on base).
+stateCommand optional executable path relative to the project root, answering
+             \`reset\`, \`capture <dir>\`, \`restore <dir>\`, and \`fingerprint\`
+             with the same env. It is what \`grove plant --from\`,
+             \`grove snapshot\`, and \`grove restore\` drive.
+secrets      optional [{ dir, cmds }] run in the target after files are copied
+             and before ports are patched, so generated env files still get
+             slot ports. A failing command aborts the plant.`;
 
 export interface RepoSpec {
   branch?: string;           // default: "main"
@@ -49,6 +56,8 @@ export interface GroveRepoConfig {
   excludes?: string[];
   teardownScript?: string;
   devCommand?: string;        // target-root-relative executable for `grove dev`
+  stateCommand?: string;      // target-root-relative executable answering the state verbs
+  secrets?: InstallSpec[];    // commands that materialize env files, run before port patching
   repos?: Record<string, RepoSpec>;
   copyFromSource?: CopyFromSourceSpec[];
   patchPortsIn?: string[];   // glob patterns relative to target
@@ -91,35 +100,52 @@ export function resolveRepoConfigPath(projectPath: string, configFile = GROVE_CO
   return resolveProjectPath(projectPath, normalizeConfigFile(configFile));
 }
 
-/** Resolve and validate the configured development executable for a target root. */
-export function resolveDevCommand(projectRoot: string, devCommand: string): string {
-  if (!devCommand.trim() || path.isAbsolute(devCommand)) {
-    throw new Error("grove config devCommand must be a non-empty path relative to the project root");
+/**
+ * Resolve and validate a configured executable for a target root. `field` names
+ * the config key in every error, so a failure says which one is wrong.
+ */
+export function resolveProjectExecutable(
+  projectRoot: string,
+  command: string,
+  field: string,
+): string {
+  if (!command.trim() || path.isAbsolute(command)) {
+    throw new Error(`grove config ${field} must be a non-empty path relative to the project root`);
   }
 
   const root = fs.realpathSync(projectRoot);
-  const candidate = path.resolve(root, devCommand);
+  const candidate = path.resolve(root, command);
   if (!isWithinRoot(root, candidate)) {
-    throw new Error("grove config devCommand must stay inside the project root");
+    throw new Error(`grove config ${field} must stay inside the project root`);
   }
   if (!fs.existsSync(candidate)) {
-    throw new Error(`grove config devCommand does not exist: ${devCommand}`);
+    throw new Error(`grove config ${field} does not exist: ${command}`);
   }
 
   const resolved = fs.realpathSync(candidate);
   if (!isWithinRoot(root, resolved)) {
-    throw new Error("grove config devCommand must stay inside the project root");
+    throw new Error(`grove config ${field} must stay inside the project root`);
   }
   const stat = fs.statSync(resolved);
   if (!stat.isFile()) {
-    throw new Error(`grove config devCommand is not a regular file: ${devCommand}`);
+    throw new Error(`grove config ${field} is not a regular file: ${command}`);
   }
   try {
     fs.accessSync(resolved, fs.constants.X_OK);
   } catch {
-    throw new Error(`grove config devCommand is not executable: ${devCommand}`);
+    throw new Error(`grove config ${field} is not executable: ${command}`);
   }
   return resolved;
+}
+
+/** Resolve and validate the configured development executable for a target root. */
+export function resolveDevCommand(projectRoot: string, devCommand: string): string {
+  return resolveProjectExecutable(projectRoot, devCommand, "devCommand");
+}
+
+/** Resolve and validate the configured state executable for a target root. */
+export function resolveStateCommand(projectRoot: string, stateCommand: string): string {
+  return resolveProjectExecutable(projectRoot, stateCommand, "stateCommand");
 }
 
 export function setupFileForConfig(configFile = GROVE_CONFIG_FILE): string {
@@ -181,13 +207,15 @@ export function validateRepoConfig(raw: unknown): GroveRepoConfig {
   if (obj.teardownScript !== undefined && typeof obj.teardownScript !== "string") {
     throw new Error("grove config teardownScript must be a string");
   }
-  if (obj.devCommand !== undefined) {
-    if (typeof obj.devCommand !== "string") {
-      throw new Error("grove config devCommand must be a string");
+  for (const field of ["devCommand", "stateCommand"] as const) {
+    const value = obj[field];
+    if (value === undefined) continue;
+    if (typeof value !== "string") {
+      throw new Error(`grove config ${field} must be a string`);
     }
-    const normalizedDevCommand = path.normalize(obj.devCommand);
-    if (!obj.devCommand.trim() || path.isAbsolute(obj.devCommand) || normalizedDevCommand === ".." || normalizedDevCommand.startsWith(`..${path.sep}`)) {
-      throw new Error("grove config devCommand must be a non-empty path relative to the project root");
+    const normalized = path.normalize(value);
+    if (!value.trim() || path.isAbsolute(value) || normalized === ".." || normalized.startsWith(`..${path.sep}`)) {
+      throw new Error(`grove config ${field} must be a non-empty path relative to the project root`);
     }
   }
   // Validate aliases
@@ -266,27 +294,9 @@ export function validateRepoConfig(raw: unknown): GroveRepoConfig {
     }
   }
 
-  // Validate install
-  let install: InstallSpec[] | undefined;
-  if (obj.install !== undefined) {
-    if (!Array.isArray(obj.install)) {
-      throw new Error("grove config install must be an array");
-    }
-    install = [];
-    for (const [i, item] of (obj.install as unknown[]).entries()) {
-      if (typeof item !== "object" || item === null) {
-        throw new Error(`install[${i}] must be an object`);
-      }
-      const inst = item as Record<string, unknown>;
-      if (typeof inst.dir !== "string") {
-        throw new Error(`install[${i}].dir must be a string`);
-      }
-      if (!Array.isArray(inst.cmds) || !inst.cmds.every((c) => typeof c === "string")) {
-        throw new Error(`install[${i}].cmds must be a string array`);
-      }
-      install.push({ dir: inst.dir, cmds: inst.cmds as string[] });
-    }
-  }
+  // Validate install and secrets — same shape, different phase
+  const install = validateCommandSpecs(obj.install, "install");
+  const secrets = validateCommandSpecs(obj.secrets, "secrets");
 
   return {
     version: obj.version,
@@ -296,12 +306,36 @@ export function validateRepoConfig(raw: unknown): GroveRepoConfig {
     excludes: obj.excludes as string[] | undefined,
     teardownScript: obj.teardownScript as string | undefined,
     devCommand: obj.devCommand as string | undefined,
+    stateCommand: obj.stateCommand as string | undefined,
     repos,
     copyFromSource,
     patchPortsIn: obj.patchPortsIn as string[] | undefined,
     install,
+    secrets,
     aliases,
   };
+}
+
+function validateCommandSpecs(raw: unknown, field: string): InstallSpec[] | undefined {
+  if (raw === undefined) return undefined;
+  if (!Array.isArray(raw)) {
+    throw new Error(`grove config ${field} must be an array`);
+  }
+  const specs: InstallSpec[] = [];
+  for (const [i, item] of (raw as unknown[]).entries()) {
+    if (typeof item !== "object" || item === null) {
+      throw new Error(`${field}[${i}] must be an object`);
+    }
+    const spec = item as Record<string, unknown>;
+    if (typeof spec.dir !== "string") {
+      throw new Error(`${field}[${i}].dir must be a string`);
+    }
+    if (!Array.isArray(spec.cmds) || !spec.cmds.every((c) => typeof c === "string")) {
+      throw new Error(`${field}[${i}].cmds must be a string array`);
+    }
+    specs.push({ dir: spec.dir, cmds: spec.cmds as string[] });
+  }
+  return specs;
 }
 
 export function hasSetupScript(

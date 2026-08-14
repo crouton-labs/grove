@@ -293,22 +293,50 @@ export function patchPorts(
 // Install dependencies
 // ---------------------------------------------------------------------------
 
-export function runInstalls(target: string, specs: InstallSpec[]): void {
+interface RunCommandsOptions {
+  /** Phase name used in log lines and errors. */
+  label: string;
+  /** When true a failing command throws instead of warning and continuing. */
+  fatal: boolean;
+}
+
+function runCommands(target: string, specs: InstallSpec[], opts: RunCommandsOptions): void {
   for (const spec of specs) {
     const dir = path.join(target, spec.dir);
     if (!fs.existsSync(dir)) {
-      console.log(`  Skipping install in ${spec.dir} (directory not found)`);
+      // A missing directory is survivable for installs but not for secrets:
+      // silently skipping leaves the instance without env files it needs.
+      if (opts.fatal) {
+        throw new Error(`${opts.label} directory not found in target: ${spec.dir}`);
+      }
+      console.log(`  Skipping ${opts.label} in ${spec.dir} (directory not found)`);
       continue;
     }
 
-    console.log(`  Installing in ${spec.dir}...`);
+    console.log(`  Running ${opts.label} in ${spec.dir}...`);
     for (const cmd of spec.cmds) {
       try {
         execSync(cmd, { stdio: "inherit", cwd: dir });
       } catch {
+        if (opts.fatal) {
+          throw new Error(`${opts.label} command failed in ${spec.dir}: ${cmd}`);
+        }
         console.error(`  Warning: command failed in ${spec.dir}: ${cmd}`);
       }
     }
     console.log(`  ${spec.dir} ready`);
   }
+}
+
+export function runInstalls(target: string, specs: InstallSpec[]): void {
+  runCommands(target, specs, { label: "install", fatal: false });
+}
+
+/**
+ * Materialize secrets into the target. Unlike installs these are fatal: a
+ * missing secret surfaces later as an unexplained runtime failure rather than
+ * as the plant error it actually is.
+ */
+export function runSecrets(target: string, specs: InstallSpec[]): void {
+  runCommands(target, specs, { label: "secrets", fatal: true });
 }

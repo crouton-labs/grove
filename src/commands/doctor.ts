@@ -2,7 +2,12 @@ import fs from "fs";
 import { loadRegistry, saveRegistry } from "../registry.js";
 import { computePorts } from "../ports.js";
 import { stopInstanceServices } from "../process.js";
-import { GROVE_CONFIG_FILE, loadRepoConfig, resolveDevCommand } from "../config.js";
+import {
+  GROVE_CONFIG_FILE,
+  loadRepoConfig,
+  resolveDevCommand,
+  resolveStateCommand,
+} from "../config.js";
 import type { GroveProjectConfig } from "../types.js";
 
 export async function doctor(project?: string) {
@@ -30,7 +35,7 @@ export async function doctor(project?: string) {
       console.log(`  \x1b[33m⚠\x1b[0m Source missing: ${proj.source}`);
     } else {
       console.log(`  \x1b[32m✓\x1b[0m Source: ${proj.source}`);
-      if (!reportDevCommand(proj, proj.source, "source")) failures++;
+      if (!reportCommands(proj, proj.source, "source")) failures++;
     }
 
     const zombieIdxs: number[] = [];
@@ -38,7 +43,7 @@ export async function doctor(project?: string) {
       const inst = proj.instances[i];
       if (fs.existsSync(inst.path)) {
         console.log(`  \x1b[32m✓\x1b[0m ${inst.name} → ${inst.path}`);
-        if (!reportDevCommand(proj, inst.path, inst.name)) failures++;
+        if (!reportCommands(proj, inst.path, inst.name)) failures++;
       } else {
         console.log(
           `  \x1b[31m✗\x1b[0m ${inst.name} → ${inst.path} (zombie)`,
@@ -81,23 +86,32 @@ export async function doctor(project?: string) {
   }
 }
 
-function reportDevCommand(project: GroveProjectConfig, root: string, label: string): boolean {
+/** Validate every configured executable for a root. Returns false on any failure. */
+function reportCommands(project: GroveProjectConfig, root: string, label: string): boolean {
   let config;
   try {
     config = loadRepoConfig(root, project.configFile ?? GROVE_CONFIG_FILE);
   } catch (error) {
-    console.log(`  \x1b[31m✗\x1b[0m ${label} devCommand: ${(error as Error).message}`);
+    console.log(`  \x1b[31m✗\x1b[0m ${label} config: ${(error as Error).message}`);
     return false;
   }
+  if (!config) return true;
 
-  if (!config?.devCommand) return true;
+  const checks: Array<[string, string | undefined, (root: string, cmd: string) => string]> = [
+    ["devCommand", config.devCommand, resolveDevCommand],
+    ["stateCommand", config.stateCommand, resolveStateCommand],
+  ];
 
-  try {
-    resolveDevCommand(root, config.devCommand);
-    console.log(`  \x1b[32m✓\x1b[0m ${label} devCommand: ${config.devCommand}`);
-    return true;
-  } catch (error) {
-    console.log(`  \x1b[31m✗\x1b[0m ${label} devCommand: ${(error as Error).message}`);
-    return false;
+  let ok = true;
+  for (const [field, value, resolve] of checks) {
+    if (!value) continue;
+    try {
+      resolve(root, value);
+      console.log(`  \x1b[32m✓\x1b[0m ${label} ${field}: ${value}`);
+    } catch (error) {
+      console.log(`  \x1b[31m✗\x1b[0m ${label} ${field}: ${(error as Error).message}`);
+      ok = false;
+    }
   }
+  return ok;
 }

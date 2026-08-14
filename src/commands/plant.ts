@@ -10,14 +10,24 @@ import {
   resolveProjectPath,
   setupFileForConfig,
 } from "../config.js";
-import { cloneRepos, copyFromSource, patchPorts, runInstalls } from "../setup.js";
+import { cloneRepos, copyFromSource, patchPorts, runInstalls, runSecrets } from "../setup.js";
 import { expandTilde } from "../paths.js";
 import { regenerateAliases } from "../aliases.js";
 import { groveContextEnv } from "../context.js";
+import {
+  BASELINE_REF,
+  applyRef,
+  describeRef,
+  hasStateCommand,
+  resolveRef,
+  type StateRef,
+} from "../state.js";
 
 interface PlantOptions {
   slot?: string;
   path?: string;
+  from?: string;
+  ignoreFingerprint?: boolean;
 }
 
 export async function plant(
@@ -93,6 +103,16 @@ export async function plant(
 
   const ports = computePorts(proj.ports, slot);
 
+  // Resolve the state ref before any filesystem work: a typo should fail in a
+  // second, not after a full clone-and-install.
+  let stateRef: StateRef | undefined;
+  try {
+    stateRef = resolveRef(project, proj, options.from ?? BASELINE_REF);
+  } catch (error) {
+    console.error(`Error: ${(error as Error).message}`);
+    process.exit(1);
+  }
+
   console.log(`Planting ${project}/${name} (slot ${slot})`);
   console.log(`  Source: ${proj.source}`);
   console.log(`  Target: ${targetPath}`);
@@ -159,6 +179,18 @@ export async function plant(
     );
   }
 
+  // Secrets run before port patching so a generated .env gets slot ports the
+  // same way a copied one does.
+  if (repoConfig?.secrets) {
+    console.log("Materializing secrets...");
+    try {
+      runSecrets(targetPath, repoConfig.secrets);
+    } catch (error) {
+      console.error(`Error: ${(error as Error).message}`);
+      process.exit(1);
+    }
+  }
+
   if (repoConfig?.patchPortsIn) {
     console.log("Patching port references...");
     patchPorts(targetPath, repoConfig.patchPortsIn, proj.ports, slot, configFile);
@@ -195,6 +227,34 @@ export async function plant(
     process.exit(1);
   }
 
+  // --- State (runs last: setup.sh has provisioned the stores it writes into) ---
+  const stateContext = {
+    source: proj.source,
+    target: targetPath,
+    slot,
+    instanceName: name,
+    ports,
+  };
+  const stateConfigured = hasStateCommand(proj, stateContext);
+  if (!stateConfigured && options.from) {
+    console.error(
+      `Error: --from ${options.from} was given but ${configFile} has no stateCommand.`,
+    );
+    process.exit(1);
+  }
+  if (stateConfigured && stateRef) {
+    console.log(`Applying state: ${describeRef(stateRef)}`);
+    try {
+      applyRef(proj, stateRef, stateContext, options.ignoreFingerprint === true);
+    } catch (error) {
+      console.error(`Error: ${(error as Error).message}`);
+      console.error(
+        `The instance exists at ${targetPath} but is unregistered. Remove it, or re-run state setup by hand.`,
+      );
+      process.exit(1);
+    }
+  }
+
   // Register
   proj.instances.push({
     name,
@@ -213,6 +273,7 @@ export async function plant(
     source: proj.source,
     target: targetPath,
     ports,
+    from: stateConfigured && stateRef ? (options.from ?? BASELINE_REF) : null,
   };
 
   console.log("");

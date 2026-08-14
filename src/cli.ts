@@ -11,6 +11,9 @@ import { uproot } from "./commands/uproot.js";
 import { list } from "./commands/list.js";
 import { adopt } from "./commands/adopt.js";
 import { doctor } from "./commands/doctor.js";
+import { snapshot } from "./commands/snapshot.js";
+import { restore } from "./commands/restore.js";
+import { states } from "./commands/states.js";
 import { noticeIfUpdateAvailable } from "./update-notice.js";
 
 const pkgPath = resolve(dirname(fileURLToPath(import.meta.url)), "..", "package.json");
@@ -56,12 +59,43 @@ program
   .addHelpText("after", `\n${GROVE_CONFIG_EXAMPLE}\n`)
   .action(register);
 
+const REF_GRAMMAR = `A state ref is one of:
+  baseline      the project's own empty/migrated baseline (the default)
+  @<instance>   captured live from that instance; @source means the project source
+  <name>        a snapshot stored by \`grove snapshot\`
+
+All three are driven by the project's own \`stateCommand\`; a project without
+one has no state layer and plants exactly as before.`;
+
 program
   .command("plant <project> [name]")
   .description("Create a new project instance (name defaults to the slot number)")
   .option("--slot <n>", "Slot number (auto-assigned if omitted)")
   .option("--path <path>", "Custom target path (default: sibling to source)")
+  .option("--from <ref>", "State to start from (default: baseline)")
+  .option("--ignore-fingerprint", "Restore even when the captured schema differs")
+  .addHelpText("after", `\n${REF_GRAMMAR}\n`)
   .action(plant);
+
+program
+  .command("snapshot <project/instance> <name>")
+  .description("Capture an instance's state into the snapshot store")
+  .option("--force", "Replace an existing snapshot of the same name")
+  .action(snapshot);
+
+program
+  .command("restore <project/instance> <ref>")
+  .description("Load a state ref into an existing instance, replacing its current state")
+  .option("--force", "Skip confirmation prompt")
+  .option("--ignore-fingerprint", "Restore even when the captured schema differs")
+  .addHelpText("after", `\n${REF_GRAMMAR}\n`)
+  .action(restore);
+
+program
+  .command("states [project]")
+  .description("List stored snapshots")
+  .option("--rm <name>", "Delete a snapshot (requires a project)")
+  .action(states);
 
 program
   .command("uproot <project/name>")

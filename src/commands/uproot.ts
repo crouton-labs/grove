@@ -1,7 +1,7 @@
 import fs from "fs";
 import { execSync } from "child_process";
-import readline from "readline";
 import { loadRegistry, saveRegistry } from "../registry.js";
+import { confirm } from "../prompt.js";
 import { computePorts, checkPort } from "../ports.js";
 import { loadRepoConfig, resolveProjectPath } from "../config.js";
 import { stopInstanceServices } from "../process.js";
@@ -10,20 +10,6 @@ import { groveContextEnv } from "../context.js";
 
 interface UprootOptions {
   force?: boolean;
-}
-
-function confirm(question: string): Promise<boolean> {
-  if (!process.stdin.isTTY) return Promise.resolve(false);
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-  });
-  return new Promise((resolve) => {
-    rl.question(question, (answer) => {
-      rl.close();
-      resolve(answer.toLowerCase() === "y" || answer.toLowerCase() === "yes");
-    });
-  });
 }
 
 export async function uproot(ref: string, options: UprootOptions) {
@@ -144,12 +130,4 @@ export async function uproot(ref: string, options: UprootOptions) {
   regenerateAliases(registry);
 
   console.log(`\nUprooted ${project}/${instanceName}.`);
-
-  // Print remaining cleanup hint (database only — processes are handled)
-  if (Object.keys(ports).length) {
-    console.log(`\nCleanup hint — drop the slot database if applicable:`);
-    console.log(
-      `  psql "postgresql://postgres:vallum@localhost:5433/postgres" -c "DROP DATABASE IF EXISTS vallum_slot${instance.slot};"`,
-    );
-  }
 }

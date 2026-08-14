@@ -6,6 +6,7 @@ import {
   loadRepoConfig,
   normalizeConfigFile,
   resolveDevCommand,
+  resolveStateCommand,
 } from "../config.js";
 import { PortDef } from "../types.js";
 import { regenerateAliases } from "../aliases.js";
@@ -51,6 +52,15 @@ export async function register(projectPath: string, options: RegisterOptions) {
   if (repoConfig?.devCommand) {
     try {
       resolveDevCommand(absPath, repoConfig.devCommand);
+    } catch (error) {
+      console.error(`Error: ${(error as Error).message}`);
+      process.exit(1);
+    }
+  }
+
+  if (repoConfig?.stateCommand) {
+    try {
+      resolveStateCommand(absPath, repoConfig.stateCommand);
     } catch (error) {
       console.error(`Error: ${(error as Error).message}`);
       process.exit(1);
@@ -122,6 +132,7 @@ export async function register(projectPath: string, options: RegisterOptions) {
     if (existing.initScript) console.log(`  Init:   ${existing.initScript}`);
     if (existing.teardownScript) console.log(`  Teardown: ${existing.teardownScript}`);
     if (repoConfig?.devCommand) console.log(`  Dev:    ${repoConfig.devCommand}`);
+    if (repoConfig?.stateCommand) console.log(`  State:  ${repoConfig.stateCommand}`);
     if (Object.keys(existing.ports).length) {
       console.log(`  Ports:`);
       for (const [n, p] of Object.entries(existing.ports)) {
@@ -150,6 +161,7 @@ export async function register(projectPath: string, options: RegisterOptions) {
   if (initScript) console.log(`  Init:   ${initScript}`);
   if (teardownScript) console.log(`  Teardown: ${teardownScript}`);
   if (repoConfig?.devCommand) console.log(`  Dev:    ${repoConfig.devCommand}`);
+  if (repoConfig?.stateCommand) console.log(`  State:  ${repoConfig.stateCommand}`);
   if (Object.keys(ports).length) {
     console.log(`  Ports:`);
     for (const [n, p] of Object.entries(ports)) {
