@@ -48,6 +48,18 @@ export interface InstallSpec {
   cmds: string[];            // commands to run in that directory
 }
 
+/**
+ * A per-slot text rewrite. Ports are the identity grove derives arithmetically;
+ * some identities are named strings instead — a reserved hostname, a resource
+ * namespace — and every instance needs its own. A rule names the files, the
+ * pattern, and what the slot's value looks like.
+ */
+export interface SubstitutionSpec {
+  in: string[];              // glob patterns relative to target
+  find: string;              // regular expression source, applied globally
+  replace: string;           // replacement template; `${slot}` is the slot number
+}
+
 export interface GroveRepoConfig {
   version: number;
   name?: string;
@@ -61,6 +73,7 @@ export interface GroveRepoConfig {
   repos?: Record<string, RepoSpec>;
   copyFromSource?: CopyFromSourceSpec[];
   patchPortsIn?: string[];   // glob patterns relative to target
+  substituteIn?: SubstitutionSpec[]; // per-slot string rewrites, applied after ports
   install?: InstallSpec[];
   aliases?: Record<string, string>; // aliasPrefix -> subdir relative to instance root
 }
@@ -294,6 +307,8 @@ export function validateRepoConfig(raw: unknown): GroveRepoConfig {
     }
   }
 
+  const substituteIn = validateSubstitutions(obj.substituteIn);
+
   // Validate install and secrets — same shape, different phase
   const install = validateCommandSpecs(obj.install, "install");
   const secrets = validateCommandSpecs(obj.secrets, "secrets");
@@ -310,10 +325,52 @@ export function validateRepoConfig(raw: unknown): GroveRepoConfig {
     repos,
     copyFromSource,
     patchPortsIn: obj.patchPortsIn as string[] | undefined,
+    substituteIn,
     install,
     secrets,
     aliases,
   };
+}
+
+/**
+ * Validate `substituteIn`. The `find` pattern is compiled here, at config load,
+ * so an unparseable regular expression is a refusal naming the rule rather than
+ * a plant that dies halfway through rewriting a target.
+ */
+function validateSubstitutions(raw: unknown): SubstitutionSpec[] | undefined {
+  if (raw === undefined) return undefined;
+  if (!Array.isArray(raw)) {
+    throw new Error("grove config substituteIn must be an array");
+  }
+  const rules: SubstitutionSpec[] = [];
+  for (const [i, item] of (raw as unknown[]).entries()) {
+    if (typeof item !== "object" || item === null) {
+      throw new Error(`substituteIn[${i}] must be an object`);
+    }
+    const rule = item as Record<string, unknown>;
+    if (
+      !Array.isArray(rule.in) ||
+      rule.in.length === 0 ||
+      !rule.in.every((g) => typeof g === "string")
+    ) {
+      throw new Error(`substituteIn[${i}].in must be a non-empty glob string array`);
+    }
+    if (typeof rule.find !== "string" || !rule.find) {
+      throw new Error(`substituteIn[${i}].find must be a non-empty regular expression string`);
+    }
+    if (typeof rule.replace !== "string") {
+      throw new Error(`substituteIn[${i}].replace must be a string`);
+    }
+    try {
+      new RegExp(rule.find, "g");
+    } catch (error) {
+      throw new Error(
+        `substituteIn[${i}].find is not a valid regular expression: ${(error as Error).message}`,
+      );
+    }
+    rules.push({ in: rule.in as string[], find: rule.find, replace: rule.replace });
+  }
+  return rules;
 }
 
 function validateCommandSpecs(raw: unknown, field: string): InstallSpec[] | undefined {

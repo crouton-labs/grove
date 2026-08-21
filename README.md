@@ -28,6 +28,7 @@ A version 1 config can define:
 - `repos` to clone into a composite instance
 - `copyFromSource` for untracked local configuration
 - `patchPortsIn` globs
+- `substituteIn` rules for per-slot values that are strings rather than ports
 - per-repository `install` commands
 - `teardownScript`
 - `secrets`, per-repository commands that materialize untracked configuration in the target
@@ -43,6 +44,22 @@ A version 1 config can define:
   { "dir": "northlight/apps/core", "cmds": ["op inject -i .env.tpl -o .env"] }
 ]
 ```
+
+`substituteIn` covers the identities grove cannot derive arithmetically. A port is `base + slot × offset`, but a reserved hostname or a namespace token is a name, and an instance that inherits the source's copy claims an external identity another instance already owns. Each rule names its own files, pattern, and slot-shaped value:
+
+```json
+"substituteIn": [
+  {
+    "in": ["northlight/apps/core/env/crouter.*.env"],
+    "find": "nl-core-g\\d+\\.ngrok\\.app",
+    "replace": "nl-core-g${slot}.ngrok.app"
+  }
+]
+```
+
+`in` is a glob list relative to the target root, `find` is a JavaScript regular expression applied globally to each matching file, and `replace` is its replacement template with `${slot}` expanded to the slot number. Capture groups (`$1`, `$<name>`) work as usual. Grove compiles `find` when it validates the config, so a bad pattern is a refusal naming the rule rather than a half-rewritten instance. Rules run after `patchPortsIn`, and never against `.grove/config.json` itself.
+
+Slot 0 is not special-cased the way ports are: a rule that produces the value the source already holds simply rewrites nothing.
 
 ## Code
 

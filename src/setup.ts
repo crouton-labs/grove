@@ -2,7 +2,13 @@ import path from "path";
 import fs from "fs";
 import { execSync } from "child_process";
 import { PortDef } from "./types.js";
-import { CopyFromSourceSpec, InstallSpec, RepoSpec, GROVE_CONFIG_FILE } from "./config.js";
+import {
+  CopyFromSourceSpec,
+  InstallSpec,
+  RepoSpec,
+  SubstitutionSpec,
+  GROVE_CONFIG_FILE,
+} from "./config.js";
 
 // ---------------------------------------------------------------------------
 // Glob matching (minimal, no dependencies)
@@ -473,6 +479,62 @@ export function patchPorts(
   }
 
   console.log(`  Patched ports in ${patchedCount} file(s)`);
+}
+
+/**
+ * Apply the config's per-slot string rewrites.
+ *
+ * Ports are arithmetic, so grove derives them; a named identity is not. A
+ * reserved hostname or a namespace token is still per-instance, and a plant
+ * that copies the source's value hands two instances the same external name.
+ * Each rule brings its own globs, pattern, and slot-shaped replacement.
+ *
+ * The replacement is a `String.replace` template with `${slot}` already
+ * expanded, so capture groups (`$1`, `$<name>`) still work. Slot 0 is NOT
+ * special-cased the way ports are: a slot-0 rewrite is what the source already
+ * holds, and skipping it would make the rule's meaning depend on the slot.
+ */
+export function applySubstitutions(
+  target: string,
+  rules: SubstitutionSpec[],
+  slot: number,
+  configFile = GROVE_CONFIG_FILE,
+): void {
+  const compiled = rules.map((rule) => ({
+    globs: rule.in,
+    regex: new RegExp(rule.find, "g"),
+    // `${slot}` is not `String.replace` syntax (only `$<name>` is), so it is
+    // safe to expand textually before the replace call.
+    replacement: rule.replace.split("${slot}").join(String(slot)),
+  }));
+
+  let patchedCount = 0;
+  for (const absPath of walkDir(target)) {
+    // Never rewrite grove's own config — it holds the rules themselves, and a
+    // pattern broad enough to match its own `find` string would eat them.
+    if (isSelectedConfig(target, absPath, configFile)) continue;
+
+    const rel = path.relative(target, absPath);
+    const applicable = compiled.filter((c) => c.globs.some((g) => matchGlob(rel, g)));
+    if (applicable.length === 0) continue;
+
+    let content: string;
+    try {
+      content = fs.readFileSync(absPath, "utf-8");
+    } catch {
+      continue;
+    }
+    let patched = content;
+    for (const c of applicable) {
+      patched = patched.replace(c.regex, c.replacement);
+    }
+    if (patched !== content) {
+      fs.writeFileSync(absPath, patched, "utf-8");
+      patchedCount++;
+    }
+  }
+
+  console.log(`  Substituted in ${patchedCount} file(s)`);
 }
 
 // ---------------------------------------------------------------------------

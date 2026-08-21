@@ -11,6 +11,7 @@ import {
   setupFileForConfig,
 } from "../config.js";
 import {
+  applySubstitutions,
   cloneRepos,
   cloneReposFromSource,
   copyFromSource,
@@ -248,6 +249,14 @@ export async function plant(
   if (repoConfig?.patchPortsIn) {
     console.log("Patching port references...");
     patchPorts(targetPath, repoConfig.patchPortsIn, proj.ports, slot, configFile);
+  }
+
+  // After ports: a substitution rule may rewrite a value a port patch just
+  // touched (a URL carrying both a hostname and a port), and the string rule is
+  // the more specific statement of the two.
+  if (repoConfig?.substituteIn) {
+    console.log("Applying per-slot substitutions...");
+    applySubstitutions(targetPath, repoConfig.substituteIn, slot, configFile);
   }
 
   if (repoConfig?.install) {
