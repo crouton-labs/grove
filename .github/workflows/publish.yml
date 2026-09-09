@@ -11,6 +11,12 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     if: "!startsWith(github.event.head_commit.message, 'chore: release')"
+    # id-token lets npm mint a short-lived publish credential over OIDC
+    # (trusted publishing). No stored credential is involved, so nothing here
+    # expires the way the NPM_TOKEN secret did.
+    permissions:
+      contents: write
+      id-token: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -21,10 +27,14 @@ jobs:
         with:
           version: 10
 
+      # registry-url is deliberately ABSENT. actions/setup-node writes an .npmrc
+      # line `//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}` whenever
+      # registry-url is set, and npm treats that (even with the variable unset)
+      # as "an auth token is configured", skips the OIDC exchange, and publishes
+      # unauthenticated — which the registry answers with a 404, not a 401.
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
-          registry-url: https://registry.npmjs.org
+          node-version: 24
 
       - run: pnpm install --frozen-lockfile
 
@@ -37,6 +47,8 @@ jobs:
 
       - run: pnpm build
 
+      # Trusted publishing needs npm >= 11.5.1 for the OIDC exchange; the npm
+      # bundled with Node 24 can predate that.
+      - run: npm install -g npm@latest
+
       - run: npm publish --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
