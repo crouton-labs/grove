@@ -60,6 +60,8 @@ export interface SubstitutionSpec {
   replace: string;           // replacement template; `${slot}` is the slot number
 }
 
+export type LifecycleRole = "start" | "stop" | "status" | "reset";
+
 export interface GroveRepoConfig {
   version: number;
   name?: string;
@@ -69,6 +71,8 @@ export interface GroveRepoConfig {
   teardownScript?: string;
   devCommand?: string;        // target-root-relative executable for `grove dev`
   stateCommand?: string;      // target-root-relative executable answering the state verbs
+  lifecycle?: Partial<Record<LifecycleRole, string[]>>;
+  nameIsSlot?: boolean;
   secrets?: InstallSpec[];    // commands that materialize env files, run before port patching
   repos?: Record<string, RepoSpec>;
   copyFromSource?: CopyFromSourceSpec[];
@@ -231,6 +235,30 @@ export function validateRepoConfig(raw: unknown): GroveRepoConfig {
       throw new Error(`grove config ${field} must be a non-empty path relative to the project root`);
     }
   }
+  let lifecycle: Partial<Record<LifecycleRole, string[]>> | undefined;
+  if (obj.lifecycle !== undefined) {
+    if (typeof obj.lifecycle !== "object" || obj.lifecycle === null || Array.isArray(obj.lifecycle)) {
+      throw new Error("grove config lifecycle must be an object");
+    }
+    const allowedRoles: LifecycleRole[] = ["start", "stop", "status", "reset"];
+    lifecycle = {};
+    for (const [role, argv] of Object.entries(obj.lifecycle as Record<string, unknown>)) {
+      if (!allowedRoles.includes(role as LifecycleRole)) {
+        throw new Error(`grove config lifecycle has unknown role "${role}" — allowed roles: ${allowedRoles.join(", ")}`);
+      }
+      if (!Array.isArray(argv) || argv.length === 0 || !argv.every((arg) => typeof arg === "string" && arg.trim().length > 0)) {
+        throw new Error(`grove config lifecycle.${role} must be a non-empty string array of arguments (e.g. ["service","stop"]) — grove does not shell-split`);
+      }
+      lifecycle[role as LifecycleRole] = argv as string[];
+    }
+    if (!obj.devCommand) {
+      throw new Error("grove config lifecycle needs devCommand — the mapping is argv for it");
+    }
+  }
+  if (obj.nameIsSlot !== undefined && typeof obj.nameIsSlot !== "boolean") {
+    throw new Error("grove config nameIsSlot must be a boolean");
+  }
+
   // Validate aliases
   let aliases: Record<string, string> | undefined;
   if (obj.aliases !== undefined) {
@@ -322,6 +350,8 @@ export function validateRepoConfig(raw: unknown): GroveRepoConfig {
     teardownScript: obj.teardownScript as string | undefined,
     devCommand: obj.devCommand as string | undefined,
     stateCommand: obj.stateCommand as string | undefined,
+    lifecycle,
+    nameIsSlot: obj.nameIsSlot as boolean | undefined,
     repos,
     copyFromSource,
     patchPortsIn: obj.patchPortsIn as string[] | undefined,
