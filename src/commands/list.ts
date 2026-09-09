@@ -1,72 +1,46 @@
-import fs from "fs";
-import { loadRegistry } from "../registry.js";
-import { computePorts, checkPort } from "../ports.js";
+import { formatGitState, gatherInventory, type InventoryTarget } from "../inventory.js";
 
-export async function list(project?: string) {
-  const registry = loadRegistry();
+export async function list(project?: string, options: { json?: boolean } = {}): Promise<void> {
+  try {
+    const inventory = await gatherInventory(project);
+    if (options.json) {
+      console.log(JSON.stringify(inventory));
+      return;
+    }
+    if (inventory.projects.length === 0) {
+      console.log("No projects registered. Run: grove register <path>");
+      return;
+    }
+    for (const item of inventory.projects) {
+      console.log(`\x1b[1m${item.name}\x1b[0m${item.sourceExists ? "" : " \x1b[31m(source missing)\x1b[0m"}`);
+      console.log(`  ${item.source}`);
+      renderTarget(item.source_target, true);
+      if (item.instances.length === 0) {
+        console.log("  (no instances)");
+      } else {
+        for (const instance of item.instances) renderTarget(instance, false);
+      }
+      console.log("");
+    }
+  } catch (error) {
+    console.error(`Error: ${(error as Error).message}`);
+    process.exitCode = 1;
+  }
+}
 
-  const names = project ? [project] : Object.keys(registry.projects);
-
-  if (names.length === 0) {
-    console.log("No projects registered. Run: grove register <path>");
+function renderTarget(target: InventoryTarget, source: boolean): void {
+  const label = source ? "(source)" : target.name;
+  const status = target.exists ? "\x1b[32m●\x1b[0m" : "\x1b[31m✗\x1b[0m";
+  console.log(`  ${status} ${label} \x1b[90m(slot ${target.slot})\x1b[0m ${target.path}`);
+  if (!target.exists) {
+    console.log("    \x1b[31mzombie — directory missing. Run grove doctor\x1b[0m");
     return;
   }
-
-  for (const name of names) {
-    const proj = registry.projects[name];
-    if (!proj) {
-      console.error(`Unknown project: ${name}`);
-      continue;
-    }
-
-    const sourceOk = fs.existsSync(proj.source);
-    console.log(
-      `\x1b[1m${name}\x1b[0m${sourceOk ? "" : " \x1b[31m(source missing)\x1b[0m"}`,
-    );
-    console.log(`  ${proj.source}`);
-
-    if (proj.instances.length === 0) {
-      console.log("  (no instances)\n");
-      continue;
-    }
-
-    for (const inst of proj.instances) {
-      const exists = fs.existsSync(inst.path);
-
-      if (!exists) {
-        console.log(
-          `  \x1b[31m✗\x1b[0m ${inst.name} \x1b[90m(slot ${inst.slot})\x1b[0m ${inst.path}`,
-        );
-        console.log("    \x1b[31mzombie — directory missing. Run grove doctor\x1b[0m");
-        continue;
-      }
-
-      console.log(
-        `  \x1b[32m●\x1b[0m ${inst.name} \x1b[90m(slot ${inst.slot})\x1b[0m ${inst.path}`,
-      );
-
-      if (inst.needsState) {
-        console.log(
-          `    \x1b[33mstate not applied\x1b[0m — grove restore ${name}/${inst.name} ${inst.needsState}`,
-        );
-      }
-
-      // Port health
-      const portDefs = proj.ports;
-      if (Object.keys(portDefs).length) {
-        const ports = computePorts(portDefs, inst.slot);
-        const checks = await Promise.all(
-          Object.entries(ports).map(async ([svc, port]) => {
-            const up = await checkPort(port);
-            const icon = up
-              ? `\x1b[32m●\x1b[0m`
-              : `\x1b[90m○\x1b[0m`;
-            return `${svc}:${port} ${icon}`;
-          }),
-        );
-        console.log(`    ${checks.join("  ")}`);
-      }
-    }
-    console.log("");
+  if (target.needsState) {
+    console.log(`    \x1b[33mstate not applied\x1b[0m — grove restore ${target.name} ${target.needsState}`);
   }
+  if (target.ports.length) {
+    console.log(`    ${target.ports.map((port) => `${port.name}:${port.port} ${port.live ? "\x1b[32m●\x1b[0m" : "\x1b[90m○\x1b[0m"}`).join("  ")}`);
+  }
+  for (const repo of target.repos) console.log(`    ${formatGitState(repo)}`);
 }

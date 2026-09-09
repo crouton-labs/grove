@@ -77,6 +77,17 @@ export async function plant(
     process.exit(1);
   }
 
+  const configFile = proj.configFile ?? GROVE_CONFIG_FILE;
+  const repoConfig = loadRepoConfig(proj.source, configFile);
+  if (repoConfig?.nameIsSlot && options.path) {
+    console.error(`Error: ${project} declares nameIsSlot; its instance path is derived from the slot (<instancesDir>/<slot>). Remove --path.`);
+    process.exit(1);
+  }
+  if (repoConfig?.nameIsSlot && name !== undefined && ((!/^[1-9]$/.test(name)) || (options.slot !== undefined && name !== String(Number(options.slot))))) {
+    console.error(`Error: ${project} declares nameIsSlot; its instances are named by slot number. Drop the name: grove plant ${project} [--slot N].`);
+    process.exit(1);
+  }
+
   // Slot assignment
   const usedSlots = new Set(proj.instances.map((i) => i.slot));
   let slot: number;
@@ -92,10 +103,19 @@ export async function plant(
     }
   } else {
     slot = nextFreeSlot(usedSlots);
+    if (slot > 9) {
+      console.error("Error: no free slots (1-9).");
+      process.exit(1);
+    }
   }
 
   // Name defaults to the slot number, so `grove plant <project>` yields 1, 2, 3, ...
   name = name ?? String(slot);
+
+  if (repoConfig?.nameIsSlot && name !== String(slot)) {
+    console.error(`Error: ${project} declares nameIsSlot; its instances are named by slot number. Drop the name: grove plant ${project} [--slot N].`);
+    process.exit(1);
+  }
 
   if (proj.instances.find((i) => i.name === name)) {
     console.error(
@@ -106,8 +126,6 @@ export async function plant(
 
   // Target path — under config.instancesDir if set (resolved relative to source,
   // with ~ expansion), otherwise a sibling of the source. An explicit --path always wins.
-  const configFile = proj.configFile ?? GROVE_CONFIG_FILE;
-  const repoConfig = loadRepoConfig(proj.source, configFile);
   const baseDir = repoConfig?.instancesDir
     ? path.resolve(proj.source, expandTilde(repoConfig.instancesDir))
     : path.dirname(proj.source);

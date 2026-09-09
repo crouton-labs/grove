@@ -33,6 +33,8 @@ A version 1 config can define:
 - `teardownScript`
 - `secrets`, per-repository commands that materialize untracked configuration in the target
 - `devCommand`, an optional executable path relative to the target root (for example `scripts/dev.sh` or `northlight/scripts/dev.sh`)
+- `lifecycle`, an optional mapping of `start`, `stop`, `status`, and `reset` to non-empty argument arrays for `devCommand`
+- `nameIsSlot`, an optional boolean that requires instances to use their slot number as both name and directory name
 - `stateCommand`, an optional executable path with the same shape, giving the project a data-state layer
 
 `devCommand` and `stateCommand` must each point to an existing regular executable file inside the project root. Grove validates them during registration, doctor checks, and dispatch; it does not guess a script path.
@@ -100,10 +102,15 @@ Snapshots live in `~/.grove/states/<project>/<name>/`, holding `meta.json` and w
 ```bash
 grove setup [source]
 grove register <source> [--config <relative-path>] [--update]
-grove dev [raw argv...]
+grove dev [--at <target>] [raw argv...]
 grove plant <project> [name] [--slot <n>] [--code-from <mode>] [--from <ref>] [--ignore-fingerprint]
 grove adopt <project> <name> <path> [--slot <n>]
-grove list [project]
+grove list [project] [--json]
+grove open [target] [--json]
+grove start <target>
+grove stop <target>
+grove status <target>
+grove reset <target>
 grove doctor [project]
 grove uproot <project/name> [--force]
 grove snapshot <project/instance> <name> [--force]
@@ -111,7 +118,7 @@ grove restore <project/instance> <ref> [--force] [--ignore-fingerprint]
 grove states [project] [--rm <name>]
 ```
 
-`grove restore <project/instance> baseline` is the reset path; there is no separate reset verb.
+`grove reset <target>` runs the project's own lifecycle reset from its `lifecycle` mapping; `grove restore <target> baseline` runs the data-state reset through `stateCommand`. They are different operations — one returns the working environment to a known state, the other returns the database to its baseline.
 
 `grove dev` resolves the current directory to the longest containing registered source or instance, then directly runs that target's configured `devCommand`. Arguments are forwarded unchanged, and Grove supplies `GROVE_SOURCE`, `GROVE_TARGET`, `GROVE_SLOT`, `GROVE_INSTANCE_NAME`, `GROVE_PORTS_JSON`, and `GROVE_PORT_<NAME>` environment variables.
 

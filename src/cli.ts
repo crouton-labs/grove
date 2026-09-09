@@ -15,6 +15,11 @@ import { doctor } from "./commands/doctor.js";
 import { snapshot } from "./commands/snapshot.js";
 import { restore } from "./commands/restore.js";
 import { states } from "./commands/states.js";
+import { open } from "./commands/open.js";
+import { start } from "./commands/start.js";
+import { stop } from "./commands/stop.js";
+import { status } from "./commands/status.js";
+import { reset } from "./commands/reset.js";
 import { noticeIfUpdateAvailable } from "./update-notice.js";
 
 const pkgPath = resolve(dirname(fileURLToPath(import.meta.url)), "..", "package.json");
@@ -23,6 +28,10 @@ const { version } = JSON.parse(readFileSync(pkgPath, "utf-8")) as { version: str
 // Notify (don't auto-install) when a newer grove is published. Throttled, and
 // written to stderr so stdout stays clean for callers that parse it.
 await noticeIfUpdateAvailable(version);
+
+// pnpm passes the argument separator through to package scripts. Strip it so the
+// documented `pnpm dev -- <verb>` form reaches Grove exactly as `<verb>` does.
+if (process.argv[2] === "--") process.argv.splice(2, 1);
 
 const program = new Command();
 
@@ -134,8 +143,20 @@ program
 
 program
   .command("list [project]")
-  .description("List instances and port health")
-  .action(list);
+  .description("List instances, git state, and port health")
+  .option("--json", "Print machine-readable inventory")
+  .action((project: string | undefined, options: { json?: boolean }) => list(project, options));
+
+program
+  .command("open [target]")
+  .description("Print a target's absolute path")
+  .option("--json", "Print target identity and path as JSON")
+  .action(open);
+
+program.command("start <target>").description("Run a target's lifecycle start command").action(start);
+program.command("stop <target>").description("Run a target's lifecycle stop command").action(stop);
+program.command("status <target>").description("Run a target's lifecycle status command").action(status);
+program.command("reset <target>").description("Run a target's lifecycle reset command").action(reset);
 
 program
   .command("adopt <project> <name> <path>")
