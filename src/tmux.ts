@@ -40,11 +40,13 @@ export function killSessionOnStop(
   if (!settings.killTmuxSessionOnStop) return;
   const name = tmuxSessionName(target);
   try {
-    if (!hasSession(name)) return;
     const killed = runTmux(["kill-session", "-t", `=${name}`]);
-    if (killed.status !== 0) {
-      warn(`Warning: tmux session ${name} was not killed: ${killed.stderr || `tmux kill-session exited ${killed.status}`}`);
-    }
+    if (killed.status === 0) return;
+    // tmux answers "there is nothing to kill" and "the kill failed" with the same exit status, so
+    // its own message is the discriminator. No session and no server are both nothing to kill;
+    // anything else really did fail and the caller hears about it.
+    if (/can't find session|no server running|error connecting to/.test(killed.stderr)) return;
+    warn(`Warning: tmux session ${name} was not killed: ${killed.stderr || `tmux kill-session exited ${killed.status}`}`);
   } catch (error) {
     warn(`Warning: tmux session ${name} was not killed: ${(error as Error).message}`);
   }

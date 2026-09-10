@@ -128,9 +128,10 @@ function aggregateSync(target: InventoryTarget): string {
   return `↑${ahead} ↓${behind}${unknown ? " ?" : ""}`;
 }
 
+/** `✱` outranks `?`: a tracked change Grove knows about must not be hidden by a repo it could not read. */
 function aggregateDirty(target: InventoryTarget): string {
-  if (target.repos.some((repo) => repo.dirty === null)) return "?";
-  return target.repos.some((repo) => repo.dirty) ? "✱" : "";
+  if (target.repos.some((repo) => repo.dirty)) return "✱";
+  return target.repos.some((repo) => repo.dirty === null) ? "?" : "";
 }
 
 function pad(value: string, width: number): string {
@@ -324,14 +325,14 @@ function App({ projectName }: { projectName: string }) {
     if (!project) return;
     const repos = [project.source_target, ...project.instances].flatMap((entry) => entry.repos.map((repo) => repo.path));
     startAction("refresh", `git fetch × ${repos.length}`, (onLine) => {
-      let cancelled = false;
-      const exitPromise = fetchRepos(repos).then((failures) => {
-        if (cancelled) onLine("interrupted — some fetches may not have run");
+      const controller = new AbortController();
+      const exitPromise = fetchRepos(repos, controller.signal).then((failures) => {
+        if (controller.signal.aborted) onLine("interrupted — some fetches did not run");
         for (const failure of failures) onLine(`fetch failed: ${failure.path}: ${failure.error}`);
         onLine(`${repos.length - failures.length}/${repos.length} repos fetched`);
         return failures.length === 0 ? 0 : 1;
       });
-      return { exit: exitPromise, interrupt: () => { cancelled = true; } };
+      return { exit: exitPromise, interrupt: () => controller.abort() };
     });
   }, [project, startAction]);
 
@@ -339,7 +340,7 @@ function App({ projectName }: { projectName: string }) {
     if (key.ctrl && input === "c") {
       if (running) {
         interrupt.current?.();
-        setMessage("Interrupted — sent SIGINT to the running command.");
+        setMessage("Interrupted — asked the running command to stop.");
         return;
       }
       return exit();
@@ -584,10 +585,12 @@ function HelpPane() {
 function toGroveTarget(projectName: string, row: Row, target: InventoryTarget): GroveTarget {
   const project = loadRegistry().projects[projectName];
   if (!project) throw new Error(`project "${projectName}" is no longer registered — press R to re-read.`);
-  if (row.isSource) return { project, projectName, root: target.path };
+  // The root comes from the registry just re-read, never from the gathered row, so a target that
+  // moved while the UI was open runs where it is registered rather than where it used to be.
+  if (row.isSource) return { project, projectName, root: project.source };
   const instance = project.instances.find((candidate) => candidate.name === target.name && candidate.slot === target.slot);
   if (!instance) throw new Error(`${projectName}/${target.name} is no longer registered — press R to re-read.`);
-  return { project, projectName, root: target.path, instance };
+  return { project, projectName, root: instance.path, instance };
 }
 
 function safeSettings(onError: (message: string) => void) {
