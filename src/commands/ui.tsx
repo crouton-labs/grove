@@ -239,7 +239,8 @@ function App({ projectName }: { projectName: string }) {
   const index = Math.max(0, rows.findIndex((row) => row.slot === slot));
   const row = rows[index] as Row | undefined;
   const target = row?.target ?? null;
-  const targetRef = target ? `${projectName}/${target.name}` : projectName;
+  // The source row's CLI target is the bare project name; only instances are addressed project/name.
+  const targetRef = target && !row?.isSource ? `${projectName}/${target.name}` : projectName;
 
   const startAction = useCallback(
     (title: string, command: string, start: (onLine: (line: string) => void) => LifecycleRun, done?: (code: number) => void) => {
@@ -274,8 +275,13 @@ function App({ projectName }: { projectName: string }) {
     [refresh],
   );
 
+  /**
+   * Resolve the role against the config on disk, refuse if it is undeclared, confirm when asked,
+   * then run. Resolution comes before the confirmation so an undeclared role never prompts, and it
+   * reads the config rather than the gathered row so a stale row can never skip the prompt.
+   */
   const runRole = useCallback(
-    (role: LifecycleRole) => {
+    (role: LifecycleRole, confirmPrompt?: string) => {
       if (!target || !row) return setMessage(`slot ${row?.slot} has no instance — press p to plant one.`);
       let plan;
       let groveTarget: GroveTarget;
@@ -288,21 +294,28 @@ function App({ projectName }: { projectName: string }) {
       const settings = role === "stop" ? safeSettings(setMessage) : null;
       if (role === "stop" && !settings) return;
       const captured: string[] = [];
-      startAction(
-        `${role} ${targetRef}`,
-        [plan.command, ...plan.argv].join(" "),
-        (onLine) =>
-          runLifecycleCaptured(plan, (line) => {
-            captured.push(line);
-            onLine(line);
-          }),
-        (code) => {
-          if (role === "status") setStatusText({ key: targetRef, lines: captured.slice(-LOG_LINES) });
-          if (role === "stop" && code === 0 && settings && groveTarget) {
-            killSessionOnStop(groveTarget, settings, (warning) => setMessage(warning));
-          }
-        },
-      );
+      const run = () =>
+        startAction(
+          `${role} ${targetRef}`,
+          [plan.command, ...plan.argv].join(" "),
+          (onLine) =>
+            runLifecycleCaptured(plan, (line) => {
+              captured.push(line);
+              onLine(line);
+            }),
+          (code) => {
+            if (role === "status" && code === 0) {
+              // The status verb's output belongs in the detail pane, so drop the action pane it ran behind.
+              setStatusText({ key: targetRef, lines: captured.slice(-LOG_LINES) });
+              setAction(null);
+            }
+            if (role === "stop" && code === 0 && settings) {
+              killSessionOnStop(groveTarget, settings, (warning) => setMessage(warning));
+            }
+          },
+        );
+      if (confirmPrompt) return setConfirmation({ prompt: confirmPrompt, run });
+      run();
     },
     [projectName, row, startAction, target, targetRef],
   );
@@ -365,8 +378,7 @@ function App({ projectName }: { projectName: string }) {
     if (input === "S") return runRole("stop");
     if (input === "t") return runRole("status");
     if (input === "r") {
-      if (!target) return setMessage(`slot ${row?.slot} has no instance — press p to plant one.`);
-      return setConfirmation({ prompt: `Run the project's reset on ${targetRef}? (y/n)`, run: () => runRole("reset") });
+      return runRole("reset", `Run the project's reset on ${targetRef}? (y/n)`);
     }
     if (input === "p") {
       if (row?.isSource) return setMessage("slot 0 is the project source — it cannot be planted over.");
