@@ -149,9 +149,9 @@ function runGitStatus(repoPath: string): Promise<string> {
   return runGit(["status", "--porcelain=v2", "--branch", "--untracked-files=no"], repoPath);
 }
 
-function runGit(args: string[], repoPath: string): Promise<string> {
+function runGit(args: string[], repoPath: string, signal?: AbortSignal): Promise<string> {
   return new Promise((resolve, reject) => {
-    execFile("git", args, { cwd: repoPath }, (error, stdout, stderr) => {
+    execFile("git", args, { cwd: repoPath, signal }, (error, stdout, stderr) => {
       if (error) reject(new Error((stderr || error.message).trim())); else resolve(stdout);
     });
   });
@@ -161,11 +161,15 @@ function runGit(args: string[], repoPath: string): Promise<string> {
  * Fetch every named repo, bounded by the same concurrency limit as the status
  * pass. Only the TUI's refresh key calls this — gathering never touches the
  * network. Returns one entry per repo that failed; the rest simply succeeded.
+ *
+ * Aborting the signal kills the fetches already running and skips the ones still
+ * queued, so a hung remote cannot hold the caller.
  */
-export async function fetchRepos(repoPaths: string[]): Promise<Array<{ path: string; error: string }>> {
+export async function fetchRepos(repoPaths: string[], signal?: AbortSignal): Promise<Array<{ path: string; error: string }>> {
   const outcomes = await Promise.all(repoPaths.map((repoPath) => withGitSlot(async () => {
+    if (signal?.aborted) return { path: repoPath, error: "skipped — interrupted" };
     try {
-      await runGit(["fetch", "--quiet"], repoPath);
+      await runGit(["fetch", "--quiet"], repoPath, signal);
       return null;
     } catch (error) {
       return { path: repoPath, error: (error as Error).message };
