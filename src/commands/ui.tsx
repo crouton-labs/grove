@@ -16,6 +16,7 @@ import { resolveTargetFromCwd, type GroveTarget } from "../target.js";
 import { killSessionOnStop, switchToSession } from "../tmux.js";
 
 const LOG_LINES = 12;
+const STATUS_PREFIX_WIDTH = 8;
 
 export async function ui(projectRef?: string): Promise<void> {
   try {
@@ -307,7 +308,8 @@ function App({ projectName }: { projectName: string }) {
           (code) => {
             if (role === "status" && code === 0) {
               // The status verb's output belongs in the detail pane, so drop the action pane it ran behind.
-              setStatusText({ key: targetRef, lines: captured.slice(-LOG_LINES) });
+              // Every captured line is kept; the detail pane decides how many of them fit.
+              setStatusText({ key: targetRef, lines: captured });
               setAction(null);
             }
             if (role === "stop" && code === 0 && settings) {
@@ -425,6 +427,7 @@ function App({ projectName }: { projectName: string }) {
 
   const width = stdout?.columns ?? 100;
   const declares = (role: LifecycleRole) => Boolean(target?.lifecycle.includes(role));
+  const statusBudget = statusRowBudget(stdout?.rows ?? 24, rows.length);
 
   return (
     <Box flexDirection="column" width={width}>
@@ -440,7 +443,13 @@ function App({ projectName }: { projectName: string }) {
       {action ? (
         <ActionPane action={action} />
       ) : (
-        <DetailPane project={project} row={row} statusText={statusText?.key === targetRef ? statusText.lines : null} />
+        <DetailPane
+          project={project}
+          row={row}
+          statusText={statusText?.key === targetRef ? statusText.lines : null}
+          statusBudget={statusBudget}
+          width={width}
+        />
       )}
       <Text dimColor>{"─".repeat(Math.max(10, width - 1))}</Text>
       {help ? (
@@ -507,7 +516,19 @@ function SlotRow({ row, selected }: { row: Row; selected: boolean }) {
   );
 }
 
-function DetailPane({ project, row, statusText }: { project: InventoryProject; row: Row; statusText: string[] | null }) {
+function DetailPane({
+  project,
+  row,
+  statusText,
+  statusBudget,
+  width,
+}: {
+  project: InventoryProject;
+  row: Row;
+  statusText: string[] | null;
+  statusBudget: number;
+  width: number;
+}) {
   const target = row.target;
   if (!target) {
     return (
@@ -528,12 +549,7 @@ function DetailPane({ project, row, statusText }: { project: InventoryProject; r
         {target.repos.length ? target.repos.map(formatGitState).join(" · ") : "(no repos declared)"}
       </Text>
       {statusText ? (
-        statusText.map((line, lineIndex) => (
-          <Text key={lineIndex} wrap="truncate-end">
-            <Text dimColor>{lineIndex === 0 ? "status  " : "        "}</Text>
-            {line}
-          </Text>
-        ))
+        <StatusLines lines={statusText} budget={statusBudget} width={width} />
       ) : (
         <Text>
           <Text dimColor>status  </Text>
@@ -541,6 +557,65 @@ function DetailPane({ project, row, statusText }: { project: InventoryProject; r
         </Text>
       )}
     </Box>
+  );
+}
+
+/**
+ * How many terminal rows the status region may occupy. Everything else on screen is one row each:
+ * the title, the column header, one line per slot, two dividers, the message line, the footer, and
+ * the detail pane's own target and repos lines.
+ */
+function statusRowBudget(terminalRows: number, slotRows: number): number {
+  return Math.max(3, terminalRows - (slotRows + 8));
+}
+
+/**
+ * Take status lines from the top until the budget is spent, measuring each line at the width it
+ * will wrap to. Reserves a row for the "more lines" notice whenever lines are left over, so the
+ * region never grows past the budget and never drops a line without saying so.
+ */
+function fitStatusLines(lines: string[], budget: number, contentWidth: number): { shown: string[]; hidden: number } {
+  const shown: string[] = [];
+  let used = 0;
+  for (const [index, line] of lines.entries()) {
+    const height = Math.max(1, Math.ceil(line.length / contentWidth));
+    const noticeRow = index === lines.length - 1 ? 0 : 1;
+    if (used + height + noticeRow > budget) break;
+    shown.push(line);
+    used += height;
+  }
+  return { shown, hidden: lines.length - shown.length };
+}
+
+/**
+ * The project's status output, verbatim. Read from the top, because a status listing is ordered
+ * top-down, and wrapped rather than truncated, because truncation hides content silently. Grove
+ * measures these lines and never reads them.
+ */
+function StatusLines({ lines, budget, width }: { lines: string[]; budget: number; width: number }) {
+  const contentWidth = Math.max(10, width - STATUS_PREFIX_WIDTH);
+  const { shown, hidden } = fitStatusLines(lines, budget, contentWidth);
+  return (
+    <>
+      {shown.map((line, lineIndex) => (
+        // minHeight keeps a blank line in the project's output a blank row here, so the region is as
+        // tall as it was measured to be and the output is shown exactly as the project wrote it.
+        <Box key={lineIndex} minHeight={1}>
+          <Box width={STATUS_PREFIX_WIDTH} flexShrink={0}>
+            <Text dimColor>{lineIndex === 0 ? "status" : ""}</Text>
+          </Box>
+          <Text wrap="wrap">{line}</Text>
+        </Box>
+      ))}
+      {hidden > 0 ? (
+        <Box>
+          <Box width={STATUS_PREFIX_WIDTH} flexShrink={0}>
+            <Text dimColor>{shown.length === 0 ? "status" : ""}</Text>
+          </Box>
+          <Text dimColor>{`… ${hidden} more ${hidden === 1 ? "line" : "lines"} not shown`}</Text>
+        </Box>
+      ) : null}
+    </>
   );
 }
 
