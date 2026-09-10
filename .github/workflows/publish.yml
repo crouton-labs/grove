@@ -51,4 +51,4 @@ jobs:
       # bundled with Node 24 can predate that.
       - run: npm install -g npm@latest
 
-      - run: npm publish --access public
+      - run: npm publish --access public --loglevel=verbose
