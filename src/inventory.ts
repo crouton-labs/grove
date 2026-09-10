@@ -145,8 +145,16 @@ function withGitSlot<T>(operation: () => Promise<T>): Promise<T> {
   });
 }
 
+/**
+ * `--no-optional-locks` is load-bearing, not tidiness. A plain `git status`
+ * refreshes the index and takes `.git/index.lock` to write it back; gathering
+ * runs it across every repo of every slot, so quitting the TUI or closing the
+ * popup mid-gather kills a status that is holding that lock and leaves an empty
+ * stale one behind. Nothing in git ever reaps it, and every later git command in
+ * that repo then fails with "another git process seems to be running".
+ */
 function runGitStatus(repoPath: string): Promise<string> {
-  return runGit(["status", "--porcelain=v2", "--branch", "--untracked-files=no"], repoPath);
+  return runGit(["--no-optional-locks", "status", "--porcelain=v2", "--branch", "--untracked-files=no"], repoPath);
 }
 
 function runGit(args: string[], repoPath: string, signal?: AbortSignal): Promise<string> {
