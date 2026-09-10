@@ -20,6 +20,7 @@ import { start } from "./commands/start.js";
 import { stop } from "./commands/stop.js";
 import { status } from "./commands/status.js";
 import { reset } from "./commands/reset.js";
+import { ui } from "./commands/ui.js";
 import { noticeIfUpdateAvailable } from "./update-notice.js";
 
 const pkgPath = resolve(dirname(fileURLToPath(import.meta.url)), "..", "package.json");
@@ -163,6 +164,11 @@ program
   .description("Adopt an existing instance into the registry")
   .option("--slot <n>", "Slot number (auto-detected from .env if omitted)")
   .action(adopt);
+
+program
+  .command("ui [project]")
+  .description("Full-screen slot table: branch, sync, dirty, live services, and the lifecycle keys")
+  .action((project: string | undefined) => ui(project));
 
 program
   .command("doctor [project]")

@@ -146,11 +146,32 @@ function withGitSlot<T>(operation: () => Promise<T>): Promise<T> {
 }
 
 function runGitStatus(repoPath: string): Promise<string> {
+  return runGit(["status", "--porcelain=v2", "--branch", "--untracked-files=no"], repoPath);
+}
+
+function runGit(args: string[], repoPath: string): Promise<string> {
   return new Promise((resolve, reject) => {
-    execFile("git", ["status", "--porcelain=v2", "--branch", "--untracked-files=no"], { cwd: repoPath }, (error, stdout) => {
-      if (error) reject(error); else resolve(stdout);
+    execFile("git", args, { cwd: repoPath }, (error, stdout, stderr) => {
+      if (error) reject(new Error((stderr || error.message).trim())); else resolve(stdout);
     });
   });
+}
+
+/**
+ * Fetch every named repo, bounded by the same concurrency limit as the status
+ * pass. Only the TUI's refresh key calls this — gathering never touches the
+ * network. Returns one entry per repo that failed; the rest simply succeeded.
+ */
+export async function fetchRepos(repoPaths: string[]): Promise<Array<{ path: string; error: string }>> {
+  const outcomes = await Promise.all(repoPaths.map((repoPath) => withGitSlot(async () => {
+    try {
+      await runGit(["fetch", "--quiet"], repoPath);
+      return null;
+    } catch (error) {
+      return { path: repoPath, error: (error as Error).message };
+    }
+  })));
+  return outcomes.filter((outcome): outcome is { path: string; error: string } => outcome !== null);
 }
 
 function parseGitStatus(output: string): Omit<InventoryRepo, "name" | "path"> {

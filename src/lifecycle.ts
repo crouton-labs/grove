@@ -1,11 +1,29 @@
 import os from "os";
-import { spawnSync } from "child_process";
+import { spawn, spawnSync, type ChildProcessByStdio } from "child_process";
+import type { Readable } from "stream";
 import { GROVE_CONFIG_FILE, loadRepoConfig, resolveDevCommand, type LifecycleRole } from "./config.js";
 import { groveContextEnv } from "./context.js";
 import { computePorts } from "./ports.js";
 import { assertTargetUsable, targetName, targetSlot, type GroveTarget } from "./target.js";
 
-export function dispatchLifecycle(target: GroveTarget, role: LifecycleRole): void {
+export interface LifecyclePlan {
+  command: string;
+  argv: string[];
+  cwd: string;
+  env: NodeJS.ProcessEnv;
+}
+
+export interface LifecycleRun {
+  /** Resolves with the child's exit code, or 128 + signal when it was signalled. */
+  exit: Promise<number>;
+  interrupt: () => void;
+}
+
+/**
+ * Resolve a lifecycle role into the argv grove will run. The mapping is read
+ * from the project's registered source config, never from an instance's copy.
+ */
+export function planLifecycle(target: GroveTarget, role: LifecycleRole): LifecyclePlan {
   assertTargetUsable(target);
   const sourceConfigFile = target.project.configFile ?? GROVE_CONFIG_FILE;
   const sourceConfig = loadRepoConfig(target.project.source, sourceConfigFile);
@@ -17,8 +35,9 @@ export function dispatchLifecycle(target: GroveTarget, role: LifecycleRole): voi
   if (!targetConfig?.devCommand) {
     throw new Error(`no devCommand configured for ${target.root}`);
   }
-  const command = resolveDevCommand(target.root, targetConfig.devCommand);
-  const result = spawnSync(command, argv, {
+  return {
+    command: resolveDevCommand(target.root, targetConfig.devCommand),
+    argv,
     cwd: target.root,
     env: groveContextEnv({
       source: target.project.source,
@@ -27,12 +46,43 @@ export function dispatchLifecycle(target: GroveTarget, role: LifecycleRole): voi
       instanceName: target.instance?.name ?? target.projectName,
       ports: computePorts(target.project.ports, targetSlot(target)),
     }),
-    stdio: "inherit",
-  });
+  };
+}
+
+/** Run a lifecycle role with the caller's stdio, returning its exit code. */
+export function dispatchLifecycle(target: GroveTarget, role: LifecycleRole): number {
+  const plan = planLifecycle(target, role);
+  const result = spawnSync(plan.command, plan.argv, { cwd: plan.cwd, env: plan.env, stdio: "inherit" });
   if (result.error) throw new Error(`failed to run devCommand: ${result.error.message}`);
-  if (result.signal) {
-    process.exitCode = 128 + os.constants.signals[result.signal];
-    return;
-  }
-  process.exitCode = result.status ?? 1;
+  if (result.signal) return 128 + os.constants.signals[result.signal];
+  return result.status ?? 1;
+}
+
+/** Run a lifecycle role with its output captured line by line, for the TUI. */
+export function runLifecycleCaptured(plan: LifecyclePlan, onLine: (line: string) => void): LifecycleRun {
+  return captureChild(
+    spawn(plan.command, plan.argv, { cwd: plan.cwd, env: plan.env, stdio: ["ignore", "pipe", "pipe"] }),
+    onLine,
+  );
+}
+
+/** Stream a piped child's merged output one line at a time. */
+export function captureChild(child: ChildProcessByStdio<null, Readable, Readable>, onLine: (line: string) => void): LifecycleRun {
+  let pending = "";
+  const consume = (chunk: Buffer) => {
+    pending += chunk.toString();
+    const lines = pending.split("\n");
+    pending = lines.pop() ?? "";
+    for (const line of lines) onLine(line);
+  };
+  child.stdout.on("data", consume);
+  child.stderr.on("data", consume);
+  const exit = new Promise<number>((resolve, reject) => {
+    child.on("error", (error) => reject(new Error(`failed to run ${child.spawnfile}: ${error.message}`)));
+    child.on("close", (code, signal) => {
+      if (pending) onLine(pending);
+      resolve(signal ? 128 + os.constants.signals[signal] : code ?? 1);
+    });
+  });
+  return { exit, interrupt: () => child.kill("SIGINT") };
 }
