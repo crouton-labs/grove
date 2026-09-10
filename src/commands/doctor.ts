@@ -8,6 +8,7 @@ import {
   resolveDevCommand,
   resolveStateCommand,
 } from "../config.js";
+import { loadSettings } from "../settings.js";
 import type { GroveProjectConfig } from "../types.js";
 
 export async function doctor(project?: string) {
@@ -15,10 +16,13 @@ export async function doctor(project?: string) {
   let totalFixed = 0;
   let failures = 0;
 
+  if (!checkSettings()) failures++;
+
   const names = project ? [project] : Object.keys(registry.projects);
 
   if (names.length === 0) {
     console.log("No projects registered.");
+    if (failures > 0) process.exitCode = 1;
     return;
   }
 
@@ -89,6 +93,18 @@ export async function doctor(project?: string) {
     process.exitCode = 1;
   } else if (totalFixed === 0) {
     console.log("\nAll clear.");
+  }
+}
+
+/** Validate `~/.grove/settings.json`. Returns false when it is present and malformed. */
+function checkSettings(): boolean {
+  try {
+    const settings = loadSettings();
+    console.log(`\x1b[32m✓\x1b[0m Settings: killTmuxSessionOnStop ${settings.killTmuxSessionOnStop}`);
+    return true;
+  } catch (error) {
+    console.log(`\x1b[31m✗\x1b[0m Settings: ${(error as Error).message}`);
+    return false;
   }
 }
 
