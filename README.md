@@ -97,6 +97,48 @@ Snapshots live in `~/.grove/states/<project>/<name>/`, holding `meta.json` and w
 
 `capture` records the `fingerprint` output; `restore` runs `fingerprint` against the destination and refuses on mismatch, naming both values. `--ignore-fingerprint` overrides it.
 
+## Settings
+
+`~/.grove/settings.json` holds machine-level settings. It is optional, has no writer — edit it by hand — and `grove doctor` validates it.
+
+```json
+{ "version": 1, "killTmuxSessionOnStop": true }
+```
+
+`killTmuxSessionOnStop` (default `false`) makes `grove stop <target>` kill the target's tmux session after the project's stop verb exits 0. The kill runs last, so the verb's output is written first, and a failed kill warns rather than failing the command — the services genuinely stopped. A non-zero stop leaves the session alone, so the window showing why it failed survives.
+
+Grove derives the session name as `<project>-<slot>`: `northlight-3` for slot 3 and `northlight-0` for the project source. `grove open --json` prints it as `tmuxSession`, and `grove ui`'s `o` key switches to it. An unknown key, a wrong type, a `version` other than 1, or unparseable JSON is a refusal naming the file and the key — from `grove doctor` and from `grove stop` before it stops anything.
+
+## grove ui
+
+`grove ui [project]` is a terminal UI over one project's slots — one row per slot 0–9, with the source at slot 0 and `(empty)` for a free slot.
+
+```
+grove ui — northlight  /Users/silasrhyneer/Code/northlight/grove/0
+ SLOT  NAME         BRANCH               SYNC        SERVICES
+▸  0  (source)     mixed              ✱ ↑1 ↓6       core:3068 ● gateway:3069 ● vault:3073 ● cdp:9222 ●
+   1  1            main                 ↑0 ↓0       core:3168 ● gateway:3169 ● vault:3173 ● cdp:9223 ○
+   2  —            (empty)
+```
+
+A composite project has several repos per slot, so each column aggregates them: BRANCH is the branch every repo agrees on or the literal word `mixed`; SYNC is `↑A ↓B` summed across the repos that have an upstream, with a trailing `?` when any repo lacks one or its state is unknown; `✱` marks a slot where any repo has tracked changes (`dirty` never counts untracked files). The detail pane under the table always shows the selected slot's per-repo truth. SERVICES is each declared port and whether something is listening on it, which every project that declares ports gets without cooperating.
+
+| key | action |
+|---|---|
+| `↑`/`k`, `↓`/`j`, `0`–`9` | move the cursor |
+| `o` | switch to the slot's tmux session, creating it if absent, and exit |
+| `p` | plant the selected empty slot |
+| `u` | uproot the selected instance, after a `y/n` confirmation |
+| `s` `S` `r` `t` | the project's `start`, `stop`, `reset`, and `status` lifecycle verbs; `r` confirms first |
+| `R` | `git fetch` every repo, then re-read |
+| `?` | help · `q` or `Esc` quit |
+
+A key the selected row does not support is dimmed in the footer and answers with the same refusal Grove's own command would print — `p` on an occupied slot, `u` on the source, or a lifecycle role the project's `lifecycle` mapping does not declare. While a command runs, the pane below the table shows the resolved argv, a rising elapsed count, and the child's output; `Ctrl-C` interrupts it and leaves the UI running.
+
+`t` runs the project's `status` verb and shows its output verbatim in the detail pane. Grove never parses it, so a project can print whatever it likes.
+
+The project comes from the `[project]` argument, else the registered project containing the current directory, else the only registered project, else a picker. `grove ui` needs a terminal on both stdin and stdout and refuses when either is redirected — for a machine-readable inventory, `grove list --json` is the same data.
+
 ## Commands
 
 ```bash
@@ -112,6 +154,7 @@ grove stop <target>
 grove status <target>
 grove reset <target>
 grove doctor [project]
+grove ui [project]
 grove uproot <project/name> [--force]
 grove snapshot <project/instance> <name> [--force]
 grove restore <project/instance> <ref> [--force] [--ignore-fingerprint]
