@@ -431,11 +431,13 @@ function App({ projectName }: { projectName: string }) {
 
   return (
     <Box flexDirection="column" width={width}>
+      {/* Every row outside the status region truncates rather than wraps, so each is one row at any
+          width — which is the chrome count statusRowBudget subtracts. */}
       <Box>
-        <Text bold>{`grove ui — ${projectName}`}</Text>
-        <Text dimColor>{`  ${project.source}`}</Text>
+        <Text bold wrap="truncate-end">{`grove ui — ${projectName}`}</Text>
+        <Text dimColor wrap="truncate-end">{`  ${project.source}`}</Text>
       </Box>
-      <Text dimColor>{` ${pad("SLOT", 6)}${pad("NAME", 13)}${pad("BRANCH", 19)}${pad("", 2)}${pad("SYNC", 12)}SERVICES`}</Text>
+      <Text dimColor wrap="truncate-end">{` ${pad("SLOT", 6)}${pad("NAME", 13)}${pad("BRANCH", 19)}${pad("", 2)}${pad("SYNC", 12)}SERVICES`}</Text>
       {rows.map((entry, entryIndex) => (
         <SlotRow key={entry.key} row={entry} selected={entryIndex === index} />
       ))}
@@ -455,10 +457,10 @@ function App({ projectName }: { projectName: string }) {
       {help ? (
         <HelpPane />
       ) : (
-        <Text>{confirmation ? <Text color="yellow">{confirmation.prompt}</Text> : message}</Text>
+        <Text wrap="truncate-end">{confirmation ? <Text color="yellow">{confirmation.prompt}</Text> : message}</Text>
       )}
       <Box>
-        <Text>
+        <Text wrap="truncate-end">
           <Text dimColor={!target}>o open</Text>
           <Text dimColor> · </Text>
           <Text dimColor={Boolean(target) || row.isSource}>p plant</Text>
@@ -566,21 +568,36 @@ function DetailPane({
  * the detail pane's own target and repos lines.
  */
 function statusRowBudget(terminalRows: number, slotRows: number): number {
-  return Math.max(3, terminalRows - (slotRows + 8));
+  return Math.max(0, terminalRows - (slotRows + 8));
+}
+
+const statusNotice = (hidden: number) => `… ${hidden} more ${hidden === 1 ? "line" : "lines"} not shown`;
+
+/**
+ * A deliberately conservative cell width: every non-ASCII code point counts as two columns. Ink
+ * wraps at real terminal cells, and over-counting only costs a shown line, while under-counting
+ * would let the region outgrow its budget and push the footer off screen.
+ */
+function statusRows(line: string, contentWidth: number): number {
+  let cells = 0;
+  for (const character of line) cells += character.codePointAt(0)! < 0x80 ? 1 : 2;
+  return Math.max(1, Math.ceil(cells / contentWidth));
 }
 
 /**
  * Take status lines from the top until the budget is spent, measuring each line at the width it
- * will wrap to. Reserves a row for the "more lines" notice whenever lines are left over, so the
+ * will wrap to. Reserves the notice's own measured height whenever lines are left over, so the
  * region never grows past the budget and never drops a line without saying so.
  */
 function fitStatusLines(lines: string[], budget: number, contentWidth: number): { shown: string[]; hidden: number } {
+  // The notice can wrap too, and its text is longest when every line is hidden.
+  const noticeRows = statusRows(statusNotice(lines.length), contentWidth);
   const shown: string[] = [];
   let used = 0;
   for (const [index, line] of lines.entries()) {
-    const height = Math.max(1, Math.ceil(line.length / contentWidth));
-    const noticeRow = index === lines.length - 1 ? 0 : 1;
-    if (used + height + noticeRow > budget) break;
+    const height = statusRows(line, contentWidth);
+    const reserved = index === lines.length - 1 ? 0 : noticeRows;
+    if (used + height + reserved > budget) break;
     shown.push(line);
     used += height;
   }
@@ -593,8 +610,11 @@ function fitStatusLines(lines: string[], budget: number, contentWidth: number): 
  * measures these lines and never reads them.
  */
 function StatusLines({ lines, budget, width }: { lines: string[]; budget: number; width: number }) {
-  const contentWidth = Math.max(10, width - STATUS_PREFIX_WIDTH);
+  const contentWidth = Math.max(1, width - STATUS_PREFIX_WIDTH);
   const { shown, hidden } = fitStatusLines(lines, budget, contentWidth);
+  // A terminal too short to hold the slot table has no rows left for this region at all, and one
+  // spent overflowing would push the footer off the screen the table has already overrun.
+  if (budget === 0) return null;
   return (
     <>
       {shown.map((line, lineIndex) => (
@@ -612,7 +632,7 @@ function StatusLines({ lines, budget, width }: { lines: string[]; budget: number
           <Box width={STATUS_PREFIX_WIDTH} flexShrink={0}>
             <Text dimColor>{shown.length === 0 ? "status" : ""}</Text>
           </Box>
-          <Text dimColor>{`… ${hidden} more ${hidden === 1 ? "line" : "lines"} not shown`}</Text>
+          <Text dimColor>{statusNotice(hidden)}</Text>
         </Box>
       ) : null}
     </>
