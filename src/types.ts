@@ -25,8 +25,8 @@ export interface GroveInstance {
    * instance exists without its data state; a successful restore clears it.
    */
   needsState?: string;
-  /** Present while plant has reserved this slot but has not completed. */
-  pending?: "planting";
+  /** Present while an operation has reserved this instance's slot. */
+  pending?: "planting" | "uprooting";
   /** Identifies the specific plant attempt that owns a pending reservation. */
   reservationId?: string;
   spec: GroveInstanceSpec;

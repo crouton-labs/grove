@@ -7,7 +7,7 @@ import {
   instanceContext,
   parseInstanceRef,
   resolveRef,
-  plantingError,
+  pendingError,
 } from "../state.js";
 
 interface RestoreOptions {
@@ -25,7 +25,7 @@ export async function restore(instanceRef: string, stateRef: string, options: Re
     }
 
     const instance = findInstance(project, projectName, instanceName);
-    if (instance.pending === "planting") throw new Error(plantingError(projectName, instance));
+    if (instance.pending) throw new Error(pendingError(projectName, instance));
     const dest = instanceContext(project, projectName, instanceName);
     const ref = resolveRef(projectName, project, stateRef);
 

@@ -91,7 +91,13 @@ export function stateNotAppliedError(
   );
 }
 
-export function plantingError(projectName: string, instance: GroveInstance): string {
+export function pendingError(projectName: string, instance: GroveInstance): string {
+  if (instance.pending === "uprooting") {
+    return (
+      `${projectName}/${instance.name} is being torn down and cannot be used. ` +
+      `Re-run grove uproot ${projectName}/${instance.name} if teardown was interrupted`
+    );
+  }
   return (
     `${projectName}/${instance.name} is still planting and cannot be used. ` +
     `Remove it with: grove uproot ${projectName}/${instance.name}`
@@ -364,6 +370,8 @@ export function resolveRef(
     if (target === "source") {
       return { kind: "live", label: "@source", context: sourceContext(project, projectName) };
     }
+    const instance = findInstance(project, projectName, target);
+    if (instance.pending) throw new Error(pendingError(projectName, instance));
     return {
       kind: "live",
       label: `@${target}`,

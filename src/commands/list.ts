@@ -32,8 +32,9 @@ function renderTarget(project: string, target: InventoryTarget, source: boolean)
   const label = source ? "(source)" : target.name;
   const status = target.exists ? "\x1b[32m●\x1b[0m" : "\x1b[31m✗\x1b[0m";
   console.log(`  ${status} ${label} \x1b[90m(slot ${target.slot})\x1b[0m ${target.path}`);
-  if (target.pending === "planting") {
-    console.log(`    \x1b[33mplanting\x1b[0m — grove uproot ${project}/${target.name}`);
+  if (target.pending) {
+    const action = target.pending === "uprooting" ? "Re-run" : "Remove";
+    console.log(`    \x1b[33m${target.pending}\x1b[0m — ${action} with: grove uproot ${project}/${target.name}`);
   } else if (!target.exists) {
     console.log("    \x1b[31mzombie — directory missing. Run grove doctor\x1b[0m");
     return;

@@ -528,13 +528,14 @@ function SlotRow({ row, selected }: { row: Row; selected: boolean }) {
       </Text>
     );
   }
-  // A reserved slot is checked before the directory, because plant registers the instance before it
-  // creates anything: an in-flight or interrupted plant is planting, not a zombie.
-  if (target.pending === "planting") {
+  // A reserved slot is checked before the directory, because the reservation outlives the directory
+  // at both ends: plant registers the instance before it creates anything, and uproot removes the
+  // directory before it deregisters. An in-flight or interrupted plant or uproot is not a zombie.
+  if (target.pending) {
     return (
       <Text color={selected ? "cyan" : undefined}>
         {`${cursor}${String(row.slot).padStart(3)}  ${pad(name, 13)}`}
-        <Text color="yellow">planting</Text>
+        <Text color="yellow">{target.pending}</Text>
       </Text>
     );
   }

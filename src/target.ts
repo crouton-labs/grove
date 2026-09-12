@@ -2,7 +2,7 @@ import fs from "fs";
 import path from "path";
 import { isWithinRoot } from "./config.js";
 import { loadRegistry } from "./registry.js";
-import { parseInstanceRef, plantingError, stateNotAppliedError } from "./state.js";
+import { parseInstanceRef, pendingError, stateNotAppliedError } from "./state.js";
 import type { GroveInstance, GroveProjectConfig } from "./types.js";
 
 export interface GroveTarget {
@@ -77,8 +77,8 @@ export function resolveTargetFromRef(ref: string): GroveTarget {
 }
 
 export function assertTargetUsable(target: GroveTarget): void {
-  if (target.instance?.pending === "planting") {
-    throw new Error(plantingError(target.projectName, target.instance));
+  if (target.instance?.pending) {
+    throw new Error(pendingError(target.projectName, target.instance));
   }
   if (target.instance?.needsState) {
     throw new Error(stateNotAppliedError(target.projectName, target.instance));

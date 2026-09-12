@@ -154,6 +154,7 @@ program
   .command("uproot <project/name>")
   .description("Tear down an instance, including a partial planting, and remove it from registry")
   .option("--force", "Skip confirmation prompt")
+  .addHelpText("after", "\nThe configured teardown script alone receives GROVE_SIBLINGS_JSON: the slot-sorted JSON inventory remaining after this instance is gone, including the source at slot 0. No other dispatched command receives it.\n")
   .action(uproot);
 
 program

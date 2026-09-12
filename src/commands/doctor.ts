@@ -57,9 +57,10 @@ export async function doctor(project?: string) {
     for (const inst of proj.instances) {
       if (!reportEnvFiles(instanceContext(proj, name, inst.name), inst.name)) failures++;
       const exists = fs.existsSync(inst.path);
-      if (inst.pending === "planting") {
-        console.log(`  \x1b[33m⚠\x1b[0m ${inst.name} → ${inst.path} (planting${exists ? "" : "; directory missing"})`);
-        console.log(`    Remove it with: grove uproot ${name}/${inst.name}`);
+      if (inst.pending) {
+        const action = inst.pending === "uprooting" ? "Re-run" : "Remove";
+        console.log(`  \x1b[33m⚠\x1b[0m ${inst.name} → ${inst.path} (${inst.pending}${exists ? "" : "; directory missing"})`);
+        console.log(`    ${action} with: grove uproot ${name}/${inst.name}`);
         failures++;
         continue;
       }
@@ -99,7 +100,7 @@ export async function doctor(project?: string) {
         const currentProject = currentRegistry.projects[zombie.project];
         const index = currentProject?.instances.findIndex((instance) =>
           instance.name === zombie.name &&
-          instance.pending !== "planting" &&
+          !instance.pending &&
           !fs.existsSync(instance.path),
         ) ?? -1;
         if (!currentProject || index === -1) continue;
