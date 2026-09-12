@@ -73,7 +73,7 @@ The legacy init script receives the user and project scopes, but not the slot sc
 
 `in` is a glob list relative to the target root, `find` is a JavaScript regular expression applied globally to each matching file, and `replace` is its replacement template with `${slot}` expanded to the slot number and `${machine}` expanded to the machine handle. Capture groups (`$1`, `$<name>`) work as usual. Grove compiles `find` when it validates the config, so a bad pattern is a refusal naming the rule rather than a half-rewritten instance. Rules run after `patchPortsIn`, and never against `.grove/config.json` itself.
 
-Grove computes the slot cap from the declared ports: it is the largest slot N for which every port in slots 0 through N is distinct and at most 65535. `grove register` and `grove setup` print that cap; `grove plant` refuses a slot above it. A project with no declared ports has no port-derived cap.
+Grove computes the slot cap from the declared ports: it is the largest slot N for which every port in slots 0 through N is distinct and at most 65535. Requested slots must be positive safe integers; `grove register` and `grove setup` print the cap, and `grove plant` refuses a slot above it. A project with no declared ports has no port-derived cap.
 
 Slot 0 is not special-cased the way ports are: a rule that produces the value the source already holds simply rewrites nothing.
 

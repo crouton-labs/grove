@@ -55,11 +55,11 @@ export async function restore(instanceRef: string, stateRef: string, options: Re
     applyRef(project, ref, dest, options.ignoreFingerprint === true);
 
     if (instance.needsState) {
-      await withRegistryLock((currentRegistry) => {
+      await withRegistryLock(async (currentRegistry) => {
         const current = currentRegistry.projects[projectName]?.instances.find((candidate) => candidate.name === instanceName);
         if (!current) throw new Error(`${projectName}/${instanceName} is no longer registered`);
         delete current.needsState;
-        saveRegistry(currentRegistry);
+        await saveRegistry(currentRegistry);
       });
     }
 

@@ -82,7 +82,7 @@ export async function doctor(project?: string) {
   }
 
   if (zombies.length) {
-    totalFixed = await withRegistryLock((currentRegistry) => {
+    totalFixed = await withRegistryLock(async (currentRegistry) => {
       let fixed = 0;
       for (const zombie of zombies) {
         const currentProject = currentRegistry.projects[zombie.project];
@@ -95,7 +95,7 @@ export async function doctor(project?: string) {
         currentProject.instances.splice(index, 1);
         fixed++;
       }
-      if (fixed > 0) saveRegistry(currentRegistry);
+      if (fixed > 0) await saveRegistry(currentRegistry);
       return fixed;
     });
     if (totalFixed > 0) console.log(`  Pruned ${totalFixed} zombie${totalFixed > 1 ? "s" : ""}.`);

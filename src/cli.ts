@@ -107,14 +107,14 @@ const REF_GRAMMAR = `A state ref is one of:
 All three are driven by the project's own \`stateCommand\`; a project without
 one has no state layer and plants exactly as before.`;
 
-const SLOT_CAP_GRAMMAR = `Slots are numbered from 1. Grove derives each project's cap from its declared ports: every port for slots 0 through the cap must be distinct and at most 65535. \`grove register\` and \`grove setup\` print the cap; \`grove plant\` refuses a requested slot above it.
+const SLOT_CAP_GRAMMAR = `Slots are positive safe integers numbered from 1. Grove derives each project's cap from its declared ports: every port for slots 0 through the cap must be distinct and at most 65535. \`grove register\` and \`grove setup\` print the cap; \`grove plant\` refuses a requested slot above it.
 
 Plant reserves its registry entry as \`planting\` before copying files. An interrupted plant remains visible and can only be removed with \`grove uproot <project/name>\`.`;
 
 program
   .command("plant <project> [name]")
   .description("Reserve a slot, then create a new project instance")
-  .option("--slot <n>", "Slot number (auto-assigned if omitted)")
+  .option("--slot <n>", "Positive safe integer slot (auto-assigned if omitted)")
   .option("--path <path>", "Custom target path (default: sibling to source)")
   .option("--code-from <mode>", "Code to start from: configured | @source (default: configured)")
   .option("--from <ref>", "State to start from (default: baseline)")
@@ -168,7 +168,7 @@ program.command("reset <target>").description("Run a target's lifecycle reset co
 program
   .command("adopt <project> <name> <path>")
   .description("Adopt an existing instance into the registry")
-  .option("--slot <n>", "Slot number (auto-detected from .env if omitted)")
+  .option("--slot <n>", "Positive safe integer slot (auto-detected from .env if omitted)")
   .action(adopt);
 
 program

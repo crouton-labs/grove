@@ -1,6 +1,13 @@
 import net from "net";
 import { PortDef } from "./types.js";
 
+/** Parse a CLI slot while keeping Infinity reserved for the internal cap sentinel. */
+export function parsePositiveSafeSlot(value: string): number | null {
+  if (!/^[1-9]\d*$/.test(value)) return null;
+  const slot = Number(value);
+  return Number.isSafeInteger(slot) ? slot : null;
+}
+
 export function computePort(def: PortDef, slot: number): number {
   return def.base + slot * def.offset;
 }

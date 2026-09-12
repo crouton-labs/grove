@@ -51,19 +51,32 @@ export async function uproot(ref: string, options: UprootOptions) {
   console.log(`  Slot: ${instance.slot}`);
 
   const ports = computePorts(proj.ports, instance.slot);
-  let contextEnv: NodeJS.ProcessEnv;
-  try {
-    contextEnv = groveContextEnv({
-      projectName: project,
-      source: proj.source,
-      target: instance.path,
-      slot: instance.slot,
-      instanceName,
-      ports,
-    });
-  } catch (error) {
-    console.error(`Error: ${(error as Error).message}`);
-    process.exit(1);
+  let teardownPath: string | null = null;
+  let teardownScript: string | undefined;
+  let contextEnv: NodeJS.ProcessEnv | undefined;
+  if (exists) {
+    const repoConfig = loadRepoConfig(instance.path, proj.configFile);
+    teardownScript = repoConfig?.teardownScript ?? proj.teardownScript;
+    if (teardownScript) {
+      const scriptPath = resolveProjectPath(instance.path, teardownScript);
+      const fallbackPath = resolveProjectPath(proj.source, teardownScript);
+      teardownPath = fs.existsSync(scriptPath) ? scriptPath : fs.existsSync(fallbackPath) ? fallbackPath : null;
+      if (teardownPath) {
+        try {
+          contextEnv = groveContextEnv({
+            projectName: project,
+            source: proj.source,
+            target: instance.path,
+            slot: instance.slot,
+            instanceName,
+            ports,
+          });
+        } catch (error) {
+          console.error(`Error: ${(error as Error).message}`);
+          process.exit(1);
+        }
+      }
+    }
   }
 
   if (Object.keys(ports).length) {
@@ -101,27 +114,16 @@ export async function uproot(ref: string, options: UprootOptions) {
   }
 
   // --- Phase 2: Run teardown script if configured ---
-  if (exists) {
-    const repoConfig = loadRepoConfig(instance.path, proj.configFile);
-    const teardownScript = repoConfig?.teardownScript ?? proj.teardownScript;
-
-    if (teardownScript) {
-      const scriptPath = resolveProjectPath(instance.path, teardownScript);
-      const fallbackPath = resolveProjectPath(proj.source, teardownScript);
-      const resolvedPath = fs.existsSync(scriptPath) ? scriptPath : fs.existsSync(fallbackPath) ? fallbackPath : null;
-
-      if (resolvedPath) {
-        console.log(`\nRunning teardown script: ${teardownScript}`);
-        try {
-          execSync(`bash "${resolvedPath}"`, {
-            stdio: "inherit",
-            cwd: instance.path,
-            env: contextEnv,
-          });
-        } catch {
-          console.error("  Warning: teardown script failed.");
-        }
-      }
+  if (teardownPath && teardownScript && contextEnv) {
+    console.log(`\nRunning teardown script: ${teardownScript}`);
+    try {
+      execSync(`bash "${teardownPath}"`, {
+        stdio: "inherit",
+        cwd: instance.path,
+        env: contextEnv,
+      });
+    } catch {
+      console.error("  Warning: teardown script failed.");
     }
   }
 
@@ -133,14 +135,14 @@ export async function uproot(ref: string, options: UprootOptions) {
 
   // --- Phase 4: Update registry ---
   try {
-    await withRegistryLock((currentRegistry) => {
+    await withRegistryLock(async (currentRegistry) => {
       const currentProject = currentRegistry.projects[project];
       const currentIndex = currentProject?.instances.findIndex((candidate) => candidate.name === instanceName) ?? -1;
       if (!currentProject || currentIndex === -1) {
         throw new Error(`${project}/${instanceName} is no longer registered`);
       }
       currentProject.instances.splice(currentIndex, 1);
-      saveRegistry(currentRegistry);
+      await saveRegistry(currentRegistry);
       regenerateAliases(currentRegistry);
     });
   } catch (error) {

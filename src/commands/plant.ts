@@ -29,6 +29,7 @@ import { expandTilde } from "../paths.js";
 import { regenerateAliases } from "../aliases.js";
 import { groveContextEnv, type GroveExecutionContext } from "../context.js";
 import { validateSharedEnv } from "../env.js";
+import { loadSettings, type GroveSettings } from "../settings.js";
 import {
   BASELINE_REF,
   applyRef,
@@ -141,11 +142,19 @@ export async function plant(
     }
   }
 
+  let settings: GroveSettings;
+  try {
+    settings = loadSettings();
+  } catch (error) {
+    console.error(`Error: ${(error as Error).message}`);
+    process.exit(1);
+  }
+
   const pendingRef = stateConfigured && stateRef ? (options.from ?? BASELINE_REF) : undefined;
   const reservationId = randomUUID();
-  let reservation: { project: NonNullable<typeof proj>; name: string; slot: number; path: string };
+  let reservation: { project: NonNullable<typeof proj>; name: string; slot: number; path: string; ports: Record<string, number> };
   try {
-  reservation = await withRegistryLock((currentRegistry) => {
+  reservation = await withRegistryLock(async (currentRegistry) => {
     const currentProject = currentRegistry.projects[project];
     if (!currentProject) {
       throw new Error(`project "${project}" is no longer registered`);
@@ -170,6 +179,9 @@ export async function plant(
         throw new Error("slot must be a positive integer");
       }
       reservedSlot = Number(options.slot);
+      if (!Number.isSafeInteger(reservedSlot)) {
+        throw new Error("slot must be a positive safe integer");
+      }
       if (reservedSlot > cap) {
         throw new Error(`slot ${reservedSlot} exceeds the project slot cap (${formatSlotCap(cap)})`);
       }
@@ -198,6 +210,15 @@ export async function plant(
       throw new Error(`target already exists: ${reservedPath}`);
     }
 
+    const reservedPorts = computePorts(currentProject.ports, reservedSlot);
+    groveContextEnv({
+      projectName: project,
+      source: currentProject.source,
+      target: reservedPath,
+      slot: reservedSlot,
+      instanceName,
+      ports: reservedPorts,
+    }, process.env, settings);
     const instance: GroveInstance = {
       name: instanceName,
       path: reservedPath,
@@ -208,9 +229,9 @@ export async function plant(
     };
     if (pendingRef) instance.needsState = pendingRef;
     currentProject.instances.push(instance);
-    saveRegistry(currentRegistry);
+    await saveRegistry(currentRegistry);
     regenerateAliases(currentRegistry);
-    return { project: currentProject, name: instanceName, slot: reservedSlot, path: reservedPath };
+    return { project: currentProject, name: instanceName, slot: reservedSlot, path: reservedPath, ports: reservedPorts };
   });
   } catch (error) {
     console.error(`Error: ${(error as Error).message}.`);
@@ -220,7 +241,7 @@ export async function plant(
   name = reservation.name;
   slot = reservation.slot;
   targetPath = reservation.path;
-  ports = computePorts(proj.ports, slot);
+  ports = reservation.ports;
   const executionContext: GroveExecutionContext = {
     projectName: project,
     source: proj.source,
@@ -275,7 +296,7 @@ export async function plant(
     console.log(`Running init script: ${proj.initScript}`);
     let initEnv: NodeJS.ProcessEnv;
     try {
-      initEnv = groveContextEnv(executionContext);
+      initEnv = groveContextEnv(executionContext, process.env, settings);
     } catch (error) {
       console.error(`Error: ${(error as Error).message}`);
       process.exit(1);
@@ -317,7 +338,7 @@ export async function plant(
   if (repoConfig?.secrets) {
     console.log("Materializing secrets...");
     try {
-      runSecrets(targetPath, repoConfig.secrets, () => groveContextEnv(executionContext));
+      runSecrets(targetPath, repoConfig.secrets, () => groveContextEnv(executionContext, process.env, settings));
     } catch (error) {
       console.error(`Error: ${(error as Error).message}`);
       process.exit(1);
@@ -336,7 +357,7 @@ export async function plant(
     console.log("Applying per-slot substitutions...");
     let machine: string;
     try {
-      machine = groveContextEnv(executionContext).GROVE_MACHINE!;
+      machine = groveContextEnv(executionContext, process.env, settings).GROVE_MACHINE!;
     } catch (error) {
       console.error(`Error: ${(error as Error).message}`);
       process.exit(1);
@@ -347,7 +368,7 @@ export async function plant(
   if (repoConfig?.install) {
     console.log("Installing dependencies...");
     try {
-      runInstalls(targetPath, repoConfig.install, () => groveContextEnv(executionContext));
+      runInstalls(targetPath, repoConfig.install, () => groveContextEnv(executionContext, process.env, settings));
     } catch (error) {
       console.error(`Error: ${(error as Error).message}`);
       process.exit(1);
@@ -362,7 +383,7 @@ export async function plant(
 
     let setupEnv: NodeJS.ProcessEnv;
     try {
-      setupEnv = groveContextEnv(executionContext);
+      setupEnv = groveContextEnv(executionContext, process.env, settings);
     } catch (error) {
       console.error(`Error: ${(error as Error).message}`);
       process.exit(1);
@@ -396,7 +417,7 @@ export async function plant(
   }
 
   try {
-    await withRegistryLock((currentRegistry) => {
+    await withRegistryLock(async (currentRegistry) => {
       const instance = currentRegistry.projects[project]?.instances.find(
         (candidate) => candidate.name === name && candidate.slot === slot && candidate.reservationId === reservationId,
       );
@@ -404,7 +425,7 @@ export async function plant(
       delete instance.pending;
       delete instance.reservationId;
       delete instance.needsState;
-      saveRegistry(currentRegistry);
+      await saveRegistry(currentRegistry);
       regenerateAliases(currentRegistry);
     });
   } catch (error) {

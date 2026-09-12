@@ -25,10 +25,10 @@ export async function setup(projectPath?: string): Promise<void> {
 
     const name = config.name || path.basename(source);
     const slotCap = maxSlot(config.ports);
-    const machine = await withRegistryLock((registry) => {
+    const machine = await withRegistryLock(async (registry) => {
       refuseInstancePath(source, registry.projects);
       const status = reconcileRegistration(registry.projects, name, source, config);
-      if (status !== "preserved") saveRegistry(registry);
+      if (status !== "preserved") await saveRegistry(registry);
       regenerateAliases(registry);
       return status;
     });
