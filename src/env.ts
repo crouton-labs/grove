@@ -10,15 +10,19 @@ export const SECRET_ENV_HELP = `Secret environment files
 Every dispatched command merges these optional files, with the later scope winning:
   ~/.grove/env                     user scope, every project
   ~/.grove/env.d/<project>.env      project scope, every slot
-  <target>/.grove/env               slot scope
+  <target>/.grove/env               slot scope after the target exists
+
+The legacy init script creates the target, so it receives only the user and
+project scopes.
 
 Lines are KEY=value. Blank lines and lines whose first non-whitespace character
 is # are ignored. Values are literal after the first =, surrounding whitespace
 is trimmed, and one matching pair of surrounding single or double quotes is
-removed. There is no interpolation or export prefix. A malformed line, or any
-GROVE_* key, refuses and names its file and line. Grove's GROVE_* context values
-always override inherited and secret-file values. Grove never creates, copies,
-or rewrites a slot env file.`;
+removed. There is no interpolation or export prefix. A malformed line, NUL byte,
+duplicate key, or any GROVE_* key refuses and names its file and line; a duplicate
+also names the earlier line. Grove's GROVE_* context values always override
+inherited and secret-file values. Grove never creates, copies, or rewrites a slot
+env file.`;
 
 export interface EnvScopeFile {
   scope: "user" | "project" | "slot";
@@ -93,6 +97,7 @@ function parseEnvFile(filePath: string): NodeJS.ProcessEnv {
   }
 
   const env: NodeJS.ProcessEnv = {};
+  const keyLines = new Map<string, number>();
   for (const [index, line] of contents.split(/\r?\n/).entries()) {
     const lineNumber = index + 1;
     const trimmed = line.trim();
@@ -118,6 +123,15 @@ function parseEnvFile(filePath: string): NodeJS.ProcessEnv {
     ) {
       value = value.slice(1, -1);
     }
+    if (value.includes("\0")) {
+      throw parseError(filePath, lineNumber, "NUL bytes are not allowed in values");
+    }
+
+    const firstLine = keyLines.get(key);
+    if (firstLine !== undefined) {
+      throw parseError(filePath, lineNumber, `duplicate key ${key}; first defined on line ${firstLine}`);
+    }
+    keyLines.set(key, lineNumber);
     env[key] = value;
   }
   return env;

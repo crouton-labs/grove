@@ -43,13 +43,13 @@ A version 1 config can define:
 
 ### Secret environment files
 
-Every dispatched command — development, lifecycle, state, setup, teardown, `secrets`, and `install` — receives three optional secret env files. Grove reads and merges them in this order, so the nearest scope wins:
+Every dispatched command — development, lifecycle, state, the legacy init script, setup, teardown, `secrets`, and `install` — receives optional secret env files. Grove reads and merges them in this order, so the nearest applicable scope wins:
 
 1. `~/.grove/env` — user scope for every project
 2. `~/.grove/env.d/<project>.env` — project scope for every slot
-3. `<target>/.grove/env` — slot scope
+3. `<target>/.grove/env` — slot scope after the target exists
 
-A missing file is skipped. Each non-blank, non-comment line is `KEY=value`; the value is literal after the first `=`, surrounding whitespace is trimmed, and one matching pair of surrounding single or double quotes is removed. There is no interpolation, `export` prefix, or inline-comment syntax. A malformed line refuses the command and names its file and line. `GROVE_*` keys are reserved for Grove's derived context and are refused in every secret env file; Grove's own context values always win over inherited and secret-file values.
+The legacy init script receives the user and project scopes, but not the slot scope because it creates the target. Every other dispatched command receives all three scopes. A missing file is skipped. Each non-blank, non-comment line is `KEY=value`; the value is literal after the first `=`, surrounding whitespace is trimmed, and one matching pair of surrounding single or double quotes is removed. There is no interpolation, `export` prefix, or inline-comment syntax. A malformed line, NUL byte, or `GROVE_*` key refuses the command and names its file and line. A repeated key in one file refuses and names both line numbers. Refusal messages never print a value. `GROVE_*` keys are reserved for Grove's derived context and are refused in every secret env file; Grove's own context values always win over inherited and secret-file values.
 
 `grove doctor` reports every scope file for the source and each instance, including whether it is missing, its key count and names, or a parse error. It never prints a value. Grove never creates, copies, or rewrites `<target>/.grove/env`: the normal source copy excludes it, and `copyFromSource`, port patching, and substitutions skip it.
 
