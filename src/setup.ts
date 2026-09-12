@@ -70,11 +70,20 @@ function walkDir(dir: string): string[] {
   return results;
 }
 
+/** Grove never copies the slot's private env file from the source into an instance. */
+function isSlotEnvFile(target: string, filePath: string): boolean {
+  return path.resolve(filePath) === path.resolve(target, ".grove", "env");
+}
+
 /**
  * Recursively copy `src` to `dest`. Dereferences valid symlinks (matching prior
  * `cp -r` behavior) but skips broken symlinks with a warning instead of failing.
  */
-function copyRecursive(src: string, dest: string): void {
+function copyRecursive(src: string, dest: string, target: string): void {
+  if (isSlotEnvFile(target, dest)) {
+    console.log("  Skipping protected slot env file");
+    return;
+  }
   let lstat: fs.Stats;
   try {
     lstat = fs.lstatSync(src);
@@ -92,7 +101,7 @@ function copyRecursive(src: string, dest: string): void {
     if (realStat.isDirectory()) {
       fs.mkdirSync(dest, { recursive: true });
       for (const entry of fs.readdirSync(src)) {
-        copyRecursive(path.join(src, entry), path.join(dest, entry));
+        copyRecursive(path.join(src, entry), path.join(dest, entry), target);
       }
     } else if (realStat.isFile()) {
       fs.copyFileSync(src, dest);
@@ -103,7 +112,7 @@ function copyRecursive(src: string, dest: string): void {
   if (lstat.isDirectory()) {
     fs.mkdirSync(dest, { recursive: true });
     for (const entry of fs.readdirSync(src)) {
-      copyRecursive(path.join(src, entry), path.join(dest, entry));
+      copyRecursive(path.join(src, entry), path.join(dest, entry), target);
     }
     return;
   }
@@ -363,12 +372,16 @@ export function copyFromSource(
       console.log(`  Skipping copy: ${spec.from} (not found in source)`);
       continue;
     }
+    if (isSlotEnvFile(target, dest)) {
+      console.log("  Skipping protected slot env file");
+      continue;
+    }
 
     fs.mkdirSync(path.dirname(dest), { recursive: true });
 
     const stat = fs.statSync(src);
     if (stat.isDirectory()) {
-      copyRecursive(src, dest);
+      copyRecursive(src, dest, target);
     } else {
       fs.copyFileSync(src, dest);
     }
@@ -378,11 +391,11 @@ export function copyFromSource(
       if (stat.isDirectory()) {
         const files = walkDir(dest);
         for (const file of files) {
-          if (!isSelectedConfig(target, file, configFile)) {
+          if (!isSelectedConfig(target, file, configFile) && !isSlotEnvFile(target, file)) {
             patchPortsInFile(file, portDefs, slot);
           }
         }
-      } else if (!isSelectedConfig(target, dest, configFile)) {
+      } else if (!isSelectedConfig(target, dest, configFile) && !isSlotEnvFile(target, dest)) {
         patchPortsInFile(dest, portDefs, slot);
       }
     }
@@ -461,8 +474,8 @@ export function patchPorts(
   for (const absPath of allFiles) {
     const rel = path.relative(target, absPath);
 
-    // Never patch grove's own config — it stores base port definitions
-    if (isSelectedConfig(target, absPath, configFile)) continue;
+    // Never patch grove's own config or a slot's private env file.
+    if (isSelectedConfig(target, absPath, configFile) || isSlotEnvFile(target, absPath)) continue;
 
     // Never patch committed env templates — by convention they hold base/
     // placeholder values, so patching them just creates a spurious diff in
@@ -513,8 +526,9 @@ export function applySubstitutions(
   let patchedCount = 0;
   for (const absPath of walkDir(target)) {
     // Never rewrite grove's own config — it holds the rules themselves, and a
-    // pattern broad enough to match its own `find` string would eat them.
-    if (isSelectedConfig(target, absPath, configFile)) continue;
+    // pattern broad enough to match its own `find` string would eat them. The
+    // slot's private env file is also outside Grove's rewrite surface.
+    if (isSelectedConfig(target, absPath, configFile) || isSlotEnvFile(target, absPath)) continue;
 
     const rel = path.relative(target, absPath);
     const applicable = compiled.filter((c) => c.globs.some((g) => matchGlob(rel, g)));
@@ -554,7 +568,7 @@ function runCommands(
   target: string,
   specs: InstallSpec[],
   opts: RunCommandsOptions,
-  env: NodeJS.ProcessEnv,
+  envForCommand: () => NodeJS.ProcessEnv,
 ): void {
   for (const spec of specs) {
     const dir = path.join(target, spec.dir);
@@ -570,6 +584,7 @@ function runCommands(
 
     console.log(`  Running ${opts.label} in ${spec.dir}...`);
     for (const cmd of spec.cmds) {
+      const env = envForCommand();
       try {
         execSync(cmd, { stdio: "inherit", cwd: dir, env });
       } catch {
@@ -583,8 +598,8 @@ function runCommands(
   }
 }
 
-export function runInstalls(target: string, specs: InstallSpec[], env: NodeJS.ProcessEnv): void {
-  runCommands(target, specs, { label: "install", fatal: false }, env);
+export function runInstalls(target: string, specs: InstallSpec[], envForCommand: () => NodeJS.ProcessEnv): void {
+  runCommands(target, specs, { label: "install", fatal: false }, envForCommand);
 }
 
 /**
@@ -592,6 +607,6 @@ export function runInstalls(target: string, specs: InstallSpec[], env: NodeJS.Pr
  * missing secret surfaces later as an unexplained runtime failure rather than
  * as the plant error it actually is.
  */
-export function runSecrets(target: string, specs: InstallSpec[], env: NodeJS.ProcessEnv): void {
-  runCommands(target, specs, { label: "secrets", fatal: true }, env);
+export function runSecrets(target: string, specs: InstallSpec[], envForCommand: () => NodeJS.ProcessEnv): void {
+  runCommands(target, specs, { label: "secrets", fatal: true }, envForCommand);
 }

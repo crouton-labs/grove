@@ -50,6 +50,7 @@ export function sourceContext(
   projectName: string,
 ): GroveExecutionContext {
   return {
+    projectName,
     source: project.source,
     target: project.source,
     slot: 0,
@@ -105,6 +106,7 @@ export function instanceContext(
 ): GroveExecutionContext {
   const instance = findInstance(project, projectName, instanceName);
   return {
+    projectName,
     source: project.source,
     target: instance.path,
     slot: instance.slot,

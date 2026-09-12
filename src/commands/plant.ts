@@ -27,7 +27,8 @@ import {
 } from "../setup.js";
 import { expandTilde } from "../paths.js";
 import { regenerateAliases } from "../aliases.js";
-import { groveContextEnv } from "../context.js";
+import { groveContextEnv, type GroveExecutionContext } from "../context.js";
+import { validateSharedEnv } from "../env.js";
 import {
   BASELINE_REF,
   applyRef,
@@ -57,6 +58,13 @@ export async function plant(
     console.error(
       `Error: --code-from must be "configured" or "@source", got "${options.codeFrom}".`,
     );
+    process.exit(1);
+  }
+
+  try {
+    validateSharedEnv(project);
+  } catch (error) {
+    console.error(`Error: ${(error as Error).message}`);
     process.exit(1);
   }
 
@@ -97,7 +105,6 @@ export async function plant(
   let slot: number;
   let targetPath: string;
   let ports: Record<string, number>;
-  let contextEnv: NodeJS.ProcessEnv;
 
   // Resolve the state ref before any filesystem work: a typo should fail in a
   // second, not after a full clone-and-install.
@@ -214,18 +221,14 @@ export async function plant(
   slot = reservation.slot;
   targetPath = reservation.path;
   ports = computePorts(proj.ports, slot);
-  try {
-    contextEnv = groveContextEnv({
-      source: proj.source,
-      target: targetPath,
-      slot,
-      instanceName: name,
-      ports,
-    });
-  } catch (error) {
-    console.error(`Error: ${(error as Error).message}`);
-    process.exit(1);
-  }
+  const executionContext: GroveExecutionContext = {
+    projectName: project,
+    source: proj.source,
+    target: targetPath,
+    slot,
+    instanceName: name,
+    ports,
+  };
   if (!options.path) fs.mkdirSync(baseDir, { recursive: true });
 
   console.log(`Planting ${project}/${name} (slot ${slot})`);
@@ -270,10 +273,17 @@ export async function plant(
     }
 
     console.log(`Running init script: ${proj.initScript}`);
+    let initEnv: NodeJS.ProcessEnv;
+    try {
+      initEnv = groveContextEnv(executionContext);
+    } catch (error) {
+      console.error(`Error: ${(error as Error).message}`);
+      process.exit(1);
+    }
     try {
       execSync(
         `bash "${scriptPath}" "${proj.source}" "${targetPath}" ${slot} "${name}"`,
-        { stdio: "inherit", cwd: proj.source },
+        { stdio: "inherit", cwd: proj.source, env: initEnv },
       );
     } catch {
       console.error("Init script failed.");
@@ -282,7 +292,7 @@ export async function plant(
   } else {
     const defaultExcludes = ["node_modules", ".next", "dist", ".turbo", ".cache", "*.tsbuildinfo"];
     const excludeList = repoConfig?.excludes ?? defaultExcludes;
-    const excludes = excludeList.map((d) => `--exclude="${d}"`).join(" ");
+    const excludes = ["/.grove/env", ...excludeList].map((d) => `--exclude="${d}"`).join(" ");
     console.log("Copying source...");
     execSync(`rsync -a ${excludes} "${proj.source}/" "${targetPath}/"`, {
       stdio: "inherit",
@@ -307,7 +317,7 @@ export async function plant(
   if (repoConfig?.secrets) {
     console.log("Materializing secrets...");
     try {
-      runSecrets(targetPath, repoConfig.secrets, contextEnv);
+      runSecrets(targetPath, repoConfig.secrets, () => groveContextEnv(executionContext));
     } catch (error) {
       console.error(`Error: ${(error as Error).message}`);
       process.exit(1);
@@ -324,12 +334,24 @@ export async function plant(
   // the more specific statement of the two.
   if (repoConfig?.substituteIn) {
     console.log("Applying per-slot substitutions...");
-    applySubstitutions(targetPath, repoConfig.substituteIn, slot, contextEnv.GROVE_MACHINE!, configFile);
+    let machine: string;
+    try {
+      machine = groveContextEnv(executionContext).GROVE_MACHINE!;
+    } catch (error) {
+      console.error(`Error: ${(error as Error).message}`);
+      process.exit(1);
+    }
+    applySubstitutions(targetPath, repoConfig.substituteIn, slot, machine, configFile);
   }
 
   if (repoConfig?.install) {
     console.log("Installing dependencies...");
-    runInstalls(targetPath, repoConfig.install, contextEnv);
+    try {
+      runInstalls(targetPath, repoConfig.install, () => groveContextEnv(executionContext));
+    } catch (error) {
+      console.error(`Error: ${(error as Error).message}`);
+      process.exit(1);
+    }
   }
 
   // --- setup.sh (runs last for anything config can't express) ---
@@ -338,8 +360,15 @@ export async function plant(
 
     console.log("Running setup script...");
 
+    let setupEnv: NodeJS.ProcessEnv;
     try {
-      execSync(`bash "${setupPath}"`, { stdio: "inherit", cwd: targetPath, env: contextEnv });
+      setupEnv = groveContextEnv(executionContext);
+    } catch (error) {
+      console.error(`Error: ${(error as Error).message}`);
+      process.exit(1);
+    }
+    try {
+      execSync(`bash "${setupPath}"`, { stdio: "inherit", cwd: targetPath, env: setupEnv });
     } catch {
       console.error(`Error: setup script failed. Remove the partial planting with: grove uproot ${project}/${name}`);
       process.exit(1);
@@ -352,13 +381,7 @@ export async function plant(
   }
 
   // --- State (runs last: setup.sh has provisioned the stores it writes into) ---
-  const stateContext = {
-    source: proj.source,
-    target: targetPath,
-    slot,
-    instanceName: name,
-    ports,
-  };
+  const stateContext = executionContext;
   if (stateConfigured && stateRef) {
     console.log(`Applying state: ${describeRef(stateRef)}`);
     try {

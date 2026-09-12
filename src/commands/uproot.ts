@@ -54,6 +54,7 @@ export async function uproot(ref: string, options: UprootOptions) {
   let contextEnv: NodeJS.ProcessEnv;
   try {
     contextEnv = groveContextEnv({
+      projectName: project,
       source: proj.source,
       target: instance.path,
       slot: instance.slot,

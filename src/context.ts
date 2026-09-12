@@ -1,6 +1,8 @@
+import { loadScopedEnv } from "./env.js";
 import { loadSettings } from "./settings.js";
 
 export interface GroveExecutionContext {
+  projectName: string;
   source: string;
   target: string;
   slot: number;
@@ -15,6 +17,7 @@ export function groveContextEnv(
 ): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {
     ...baseEnv,
+    ...loadScopedEnv(context),
     GROVE_MACHINE: loadSettings().machine,
     GROVE_SLOT: String(context.slot),
     GROVE_SOURCE: context.source,

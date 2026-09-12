@@ -22,6 +22,7 @@ export function dev(args: string[]): void {
     const result = spawnSync(command, forwarded, {
       cwd: target.root,
       env: groveContextEnv({
+        projectName: target.projectName,
         source: target.project.source,
         target: target.root,
         slot,

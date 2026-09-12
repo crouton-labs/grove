@@ -22,6 +22,7 @@ import { status } from "./commands/status.js";
 import { reset } from "./commands/reset.js";
 import { ui } from "./commands/ui.js";
 import { noticeIfUpdateAvailable } from "./update-notice.js";
+import { SECRET_ENV_HELP } from "./env.js";
 
 const pkgPath = resolve(dirname(fileURLToPath(import.meta.url)), "..", "package.json");
 const { version } = JSON.parse(readFileSync(pkgPath, "utf-8")) as { version: string };
@@ -39,7 +40,8 @@ const program = new Command();
 program
   .name("grove")
   .description("Parallel project instance manager")
-  .version(version);
+  .version(version)
+  .addHelpText("after", `\n${SECRET_ENV_HELP}\n`);
 
 program
   .command("dev [args...]")
@@ -176,7 +178,8 @@ program
 
 program
   .command("doctor [project]")
-  .description("Validate registry, report planting instances, and prune zombies")
+  .description("Validate registry, secret env files, report planting instances, and prune zombies")
+  .addHelpText("after", `\n${SECRET_ENV_HELP}\n`)
   .action(doctor);
 
 // `dev` is a raw forwarding boundary: Commander must never parse its tail.

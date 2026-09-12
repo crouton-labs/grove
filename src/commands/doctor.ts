@@ -9,6 +9,9 @@ import {
   resolveStateCommand,
 } from "../config.js";
 import { loadSettings } from "../settings.js";
+import { inspectScopedEnv } from "../env.js";
+import { instanceContext, sourceContext } from "../state.js";
+import type { GroveExecutionContext } from "../context.js";
 import type { GroveProjectConfig } from "../types.js";
 
 export async function doctor(project?: string) {
@@ -35,6 +38,7 @@ export async function doctor(project?: string) {
     }
 
     console.log(`Checking ${name}...`);
+    if (!reportEnvFiles(sourceContext(proj, name), "source")) failures++;
 
     if (!fs.existsSync(proj.source)) {
       console.log(`  \x1b[33m⚠\x1b[0m Source missing: ${proj.source}`);
@@ -44,6 +48,7 @@ export async function doctor(project?: string) {
     }
 
     for (const inst of proj.instances) {
+      if (!reportEnvFiles(instanceContext(proj, name, inst.name), inst.name)) failures++;
       const exists = fs.existsSync(inst.path);
       if (inst.pending === "planting") {
         console.log(`  \x1b[33m⚠\x1b[0m ${inst.name} → ${inst.path} (planting${exists ? "" : "; directory missing"})`);
@@ -117,6 +122,30 @@ function checkSettings(): boolean {
     console.log(`\x1b[31m✗\x1b[0m Settings: ${(error as Error).message}`);
     return false;
   }
+}
+
+/** Report secret env files for one dispatch target without exposing their values. */
+function reportEnvFiles(context: GroveExecutionContext, label: string): boolean {
+  let ok = true;
+  try {
+    for (const file of inspectScopedEnv(context)) {
+      if (!file.exists) {
+        console.log(`  \x1b[90m-\x1b[0m ${label} ${file.scope} env: ${file.path} (missing)`);
+        continue;
+      }
+      if (file.error) {
+        console.log(`  \x1b[31m✗\x1b[0m ${label} ${file.scope} env: ${file.error.message}`);
+        ok = false;
+        continue;
+      }
+      const names = file.keys.length ? `: ${file.keys.join(", ")}` : "";
+      console.log(`  \x1b[32m✓\x1b[0m ${label} ${file.scope} env: ${file.path} (${file.keys.length} key${file.keys.length === 1 ? "" : "s"}${names})`);
+    }
+  } catch (error) {
+    console.log(`  \x1b[31m✗\x1b[0m ${label} env: ${(error as Error).message}`);
+    ok = false;
+  }
+  return ok;
 }
 
 /** Validate every configured executable for a root. Returns false on any failure. */

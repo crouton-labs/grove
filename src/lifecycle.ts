@@ -40,6 +40,7 @@ export function planLifecycle(target: GroveTarget, role: LifecycleRole): Lifecyc
     argv,
     cwd: target.root,
     env: groveContextEnv({
+      projectName: target.projectName,
       source: target.project.source,
       target: target.root,
       slot: targetSlot(target),
