@@ -81,53 +81,41 @@ function isSlotEnvFile(target: string, filePath: string): boolean {
   return path.resolve(filePath) === path.resolve(target, ".grove", "env");
 }
 
-/**
- * Recursively copy `src` to `dest`. Dereferences valid symlinks (matching prior
- * `cp -r` behavior) but skips broken symlinks with a warning instead of failing.
- */
-function copyRecursive(src: string, dest: string, target: string): void {
+/** Recursively copy `src` to `dest`, returning the number of copied file entries. */
+function copyRecursive(src: string, dest: string, target: string): number {
   if (isSlotEnvFile(target, dest)) {
     console.log("  Skipping protected slot env file");
-    return;
+    return 0;
   }
   let lstat: fs.Stats;
   try {
     lstat = fs.lstatSync(src);
   } catch {
     console.log(`  Warning: cannot stat ${src}, skipping`);
-    return;
+    return 0;
   }
 
   if (lstat.isSymbolicLink()) {
-    if (!fs.existsSync(src)) {
-      console.log(`  Warning: skipping broken symlink ${src}`);
-      return;
-    }
-    const realStat = fs.statSync(src);
-    if (realStat.isDirectory()) {
-      fs.mkdirSync(dest, { recursive: true });
-      for (const entry of fs.readdirSync(src)) {
-        copyRecursive(path.join(src, entry), path.join(dest, entry), target);
-      }
-    } else if (realStat.isFile()) {
-      fs.copyFileSync(src, dest);
-      console.log(`  Rewrote ${path.relative(target, dest)}`);
-    }
-    return;
+    fs.rmSync(dest, { recursive: true, force: true });
+    fs.symlinkSync(fs.readlinkSync(src), dest);
+    return 1;
   }
 
   if (lstat.isDirectory()) {
     fs.mkdirSync(dest, { recursive: true });
+    let copied = 0;
     for (const entry of fs.readdirSync(src)) {
-      copyRecursive(path.join(src, entry), path.join(dest, entry), target);
+      copied += copyRecursive(path.join(src, entry), path.join(dest, entry), target);
     }
-    return;
+    return copied;
   }
 
   if (lstat.isFile()) {
-    fs.copyFileSync(src, dest);
-    console.log(`  Rewrote ${path.relative(target, dest)}`);
+    fs.copyFileSync(src, dest, fs.constants.COPYFILE_FICLONE);
+    return 1;
   }
+
+  return 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -381,11 +369,26 @@ export function cloneRepos(
     }
 
     console.log(`  Cloning ${repoName} → ${branch} ...`);
-    const submoduleFlag = spec.recurseSubmodules ? " --recurse-submodules" : "";
-    execSync(
-      `git clone -b "${branch}"${submoduleFlag} "${remoteUrl}" "${destRepo}" --quiet`,
-      { stdio: "inherit" },
-    );
+    execSync(`git clone --quiet --no-checkout "${srcRepo}" "${destRepo}"`, {
+      stdio: "inherit",
+    });
+    execSync(`git -C "${destRepo}" remote set-url origin "${remoteUrl}"`, {
+      stdio: "inherit",
+    });
+    execSync(`git -C "${destRepo}" fetch --quiet --prune origin`, {
+      stdio: "inherit",
+    });
+    execSync(`git -C "${destRepo}" checkout --quiet -B "${branch}" "origin/${branch}"`, {
+      stdio: "inherit",
+    });
+    execSync(`git -C "${destRepo}" branch --set-upstream-to="origin/${branch}" "${branch}"`, {
+      stdio: "inherit",
+    });
+    if (spec.recurseSubmodules) {
+      execSync(`git -C "${destRepo}" submodule update --init --recursive --quiet`, {
+        stdio: "inherit",
+      });
+    }
   }
 }
 
@@ -409,7 +412,10 @@ export function copyFromSource(
     const src = path.join(source, spec.from);
     const dest = path.join(target, spec.to ?? spec.from);
 
-    if (!fs.existsSync(src)) {
+    let stat: fs.Stats;
+    try {
+      stat = fs.lstatSync(src);
+    } catch {
       console.log(`  Skipping copy: ${spec.from} (not found in source)`);
       continue;
     }
@@ -420,11 +426,10 @@ export function copyFromSource(
 
     fs.mkdirSync(path.dirname(dest), { recursive: true });
 
-    const stat = fs.statSync(src);
+    const copied = copyRecursive(src, dest, target);
     if (stat.isDirectory()) {
-      copyRecursive(src, dest, target);
+      console.log(`  Copied ${path.relative(target, dest)} (${copied} file(s))`);
     } else {
-      fs.copyFileSync(src, dest);
       console.log(`  Rewrote ${path.relative(target, dest)}`);
     }
 
