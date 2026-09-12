@@ -5,7 +5,6 @@ import {
   discardConfiguredRepositoryChanges,
   fastForwardConfiguredRepositories,
 } from "../revisions.js";
-import { saveRegistry, withRegistryLock } from "../registry.js";
 import { hasStateCommand, instanceContext, resetState } from "../state.js";
 import { resolveTarget, targetName } from "../target.js";
 import { applyTarget } from "./apply.js";
@@ -26,14 +25,14 @@ export async function release(targetRef: string, options: ReleaseOptions): Promi
     }
 
     const preflight = sourceRepositories(target);
-    if (!options.force) assertConfiguredRepositoriesClean(preflight.repositories, "release");
+    if (!options.force) assertConfiguredRepositoriesClean(preflight.repositories, "release", true);
 
     const reservation = await reserveRevisionOperation(target, "releasing");
     const { repositories } = sourceRepositories(reservation.target);
     if (options.force) {
       discardConfiguredRepositoryChanges(repositories, "release");
     } else {
-      assertConfiguredRepositoriesClean(repositories, "release");
+      assertConfiguredRepositoriesClean(repositories, "release", true);
     }
 
     console.log(`Releasing ${targetName(reservation.target)} (slot ${reservation.target.instance!.slot})`);
@@ -45,22 +44,10 @@ export async function release(targetRef: string, options: ReleaseOptions): Promi
     );
     await applyTarget(reservation.target, {
       pendingOperation: { pending: reservation.pending, id: reservation.id },
+      complete: (instance) => {
+        instance.spec.labels = { "grove.pool": "ready" };
+      },
     });
-
-    await withRegistryLock(async (registry) => {
-      const project = registry.projects[reservation.target.projectName];
-      const instance = project?.instances.find((candidate) =>
-        candidate.name === reservation.target.instance!.name &&
-        candidate.slot === reservation.target.instance!.slot &&
-        candidate.path === reservation.target.instance!.path &&
-        candidate.created === reservation.target.instance!.created,
-      );
-      if (!instance) throw new Error(`${targetName(reservation.target)} is no longer registered`);
-      instance.spec.labels = { "grove.pool": "ready" };
-      await saveRegistry(registry);
-    });
-
-    console.log(`Released: ${targetName(reservation.target)}`);
   } catch (error) {
     console.error(`Error: ${(error as Error).message}`);
     process.exitCode = 1;

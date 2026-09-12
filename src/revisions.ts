@@ -28,20 +28,26 @@ export function configuredRepositories(root: string, config: GroveRepoConfig | n
   });
 }
 
-/** Refuse tracked changes in every repository before changing any of them. */
-export function assertConfiguredRepositoriesClean(repositories: readonly ConfiguredRepository[], operation: string): void {
+/** Refuse tracked changes, and optionally untracked files, before changing any repository. */
+export function assertConfiguredRepositoriesClean(
+  repositories: readonly ConfiguredRepository[],
+  operation: string,
+  includeUntracked = false,
+): void {
   const dirty: string[] = [];
   for (const repository of repositories) {
     const status = runGit(
       repository.path,
-      ["--no-optional-locks", "status", "--porcelain", "--untracked-files=no", "--ignore-submodules=none"],
+      ["--no-optional-locks", "status", "--porcelain", `--untracked-files=${includeUntracked ? "all" : "no"}`, "--ignore-submodules=none"],
       repository.name,
       operation,
     );
     if (status) dirty.push(repository.name);
   }
   if (dirty.length) {
-    throw new Error(`refusing to ${operation}: tracked changes in ${dirty.join(", ")}; commit or stash them first`);
+    const changes = includeUntracked ? "tracked or untracked changes" : "tracked changes";
+    const recovery = includeUntracked ? "; commit or stash them first, or pass --force" : "; commit or stash them first";
+    throw new Error(`refusing to ${operation}: ${changes} in ${dirty.join(", ")}${recovery}`);
   }
 }
 

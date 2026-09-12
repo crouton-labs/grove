@@ -154,7 +154,7 @@ program
   .command("release <target>")
   .description("Return one instance to its configured code, baseline state, and ready pool")
   .option("--force", "Discard tracked and untracked repository changes before release")
-  .addHelpText("after", "\nRelease refuses tracked changes in configured repositories. --force runs git reset --hard and git clean -fd in every configured repository, then fast-forwards configured branches, resets data state, applies the project configuration, drops all labels, and sets grove.pool=ready. If interrupted before the final label update, re-run grove release <target> to finish it.\n")
+  .addHelpText("after", "\nRelease refuses tracked or untracked changes in configured repositories. --force runs git reset --hard and git clean -fd in every configured repository, then fast-forwards configured branches, resets data state, applies the project configuration, drops all labels, and sets grove.pool=ready in one final save. If interrupted before that save, the releasing reservation and existing labels remain; re-run grove release <target> to finish it. If it reports repository changes, run grove release <target> --force.\n")
   .action(release);
 
 program

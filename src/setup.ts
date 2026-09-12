@@ -333,6 +333,26 @@ export function describeAppliedCode(
   return code;
 }
 
+/** Read the current checkout for every repository recorded when this instance was applied. */
+export function describeRecordedRepos(
+  target: string,
+  recorded: NonNullable<GroveApplied["code"]>,
+): Record<string, { branch: string | null; sha: string }> {
+  const described: Record<string, { branch: string | null; sha: string }> = {};
+  for (const repoName of Object.keys(recorded)) {
+    const repoPath = path.join(target, repoName);
+    if (!fs.existsSync(path.join(repoPath, ".git"))) {
+      throw new Error(`cannot describe ${repoName}: recorded repository is not a git checkout: ${repoPath}`);
+    }
+    const sha = git(repoPath, "rev-parse HEAD");
+    described[repoName] = {
+      branch: gitOrNull(repoPath, "symbolic-ref --quiet --short HEAD"),
+      sha,
+    };
+  }
+  return described;
+}
+
 export function cloneRepos(
   source: string,
   target: string,

@@ -42,7 +42,7 @@ function poolStatus(projectName: string) {
   const project = registry.projects[projectName];
   if (!project) throw new Error(`project "${projectName}" not registered`);
   const ready = project.instances
-    .filter((instance) => instance.spec.labels["grove.pool"] === "ready" && !instance.pending && !instance.needsState)
+    .filter((instance) => instance.spec.labels["grove.pool"] === "ready" && (instance.pending === undefined || instance.pending === "planting"))
     .sort((a, b) => a.slot - b.slot || a.name.localeCompare(b.name));
   return { project, ready };
 }

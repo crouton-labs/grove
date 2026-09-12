@@ -12,7 +12,7 @@ import { loadSettings } from "../settings.js";
 import { applyExistingCheckoutSetup, describeAppliedCode } from "../setup.js";
 import { activePendingOperationError, isPendingInstanceOperationActive } from "../state.js";
 import { assertTargetUsable, type GroveTarget, targetSlot } from "../target.js";
-import { recordApplied } from "../types.js";
+import { recordApplied, type GroveInstance } from "../types.js";
 
 interface ApplyOptions extends TargetingOptions {
   force?: boolean;
@@ -25,6 +25,8 @@ export interface ApplyTargetOptions {
   rolledBackFrom?: string;
   /** Runs after setup but before this function records the revision. */
   afterSetup?: (target: GroveTarget) => void | Promise<void>;
+  /** Mutates the completed instance after its revision is recorded and before the completion save. */
+  complete?: (instance: GroveInstance) => void;
 }
 
 /** Converge an existing instance's Grove-owned configuration without touching code or state. */
@@ -110,6 +112,7 @@ export async function applyTarget(target: GroveTarget, options: ApplyTargetOptio
       code: describeAppliedCode(current.root, reserved.sourceConfig?.repos),
       ...(options.rolledBackFrom ? { rolledBackFrom: options.rolledBackFrom } : {}),
     });
+    options.complete?.(targetInstance);
     delete targetInstance.pending;
     delete targetInstance.pendingOperation;
     await saveRegistry(registry);
