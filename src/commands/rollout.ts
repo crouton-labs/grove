@@ -4,7 +4,7 @@ import { assertConfiguredRepositoriesClean, configuredRepositories, fastForwardC
 import { runSequential, selectTargets, type TargetingOptions } from "../selection.js";
 import { targetName, type GroveTarget } from "../target.js";
 import { applyTarget } from "./apply.js";
-import { completeRevisionOperation, reserveRevisionOperation } from "./revision-operation.js";
+import { reserveRevisionOperation } from "./revision-operation.js";
 
 /** Move a selected fleet to every repository's configured branch and verify it starts. */
 export async function rollout(project: string, options: TargetingOptions): Promise<void> {
@@ -38,7 +38,6 @@ async function rolloutTarget(target: GroveTarget): Promise<number> {
     afterSetup: () => verifyLifecycle(reservation.target, config),
   });
 
-  await completeRevisionOperation(reservation);
   console.log(`Rolled out: ${targetName(reservation.target)}`);
   return 0;
 }

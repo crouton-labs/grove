@@ -20,7 +20,7 @@ interface ApplyOptions extends TargetingOptions {
 
 export interface ApplyTargetOptions {
   force?: boolean;
-  /** Keep a rollout or rollback reservation in place while apply records its revision. */
+  /** The rollout or rollback reservation that owns this apply. */
   pendingOperation?: { pending: "rolling-out" | "rolling-back"; id: string };
   rolledBackFrom?: string;
   /** Runs after setup but before this function records the revision. */
@@ -110,10 +110,8 @@ export async function applyTarget(target: GroveTarget, options: ApplyTargetOptio
       code: describeAppliedCode(current.root, reserved.sourceConfig?.repos),
       ...(options.rolledBackFrom ? { rolledBackFrom: options.rolledBackFrom } : {}),
     });
-    if (!options.pendingOperation) {
-      delete targetInstance.pending;
-      delete targetInstance.pendingOperation;
-    }
+    delete targetInstance.pending;
+    delete targetInstance.pendingOperation;
     await saveRegistry(registry);
   });
 

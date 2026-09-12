@@ -3,7 +3,7 @@ import { currentApplied } from "../types.js";
 import { assertConfiguredRepositoriesClean, checkoutPreviousRevision, configuredRepositories } from "../revisions.js";
 import { resolveTarget, targetName } from "../target.js";
 import { applyTarget } from "./apply.js";
-import { completeRevisionOperation, reserveRevisionOperation } from "./revision-operation.js";
+import { reserveRevisionOperation } from "./revision-operation.js";
 
 /** Restore one instance's configured repositories to its previous recorded revision. */
 export async function rollback(targetRef: string): Promise<void> {
@@ -27,7 +27,6 @@ export async function rollback(targetRef: string): Promise<void> {
       pendingOperation: { pending: reservation.pending, id: reservation.id },
       rolledBackFrom: current.at,
     });
-    await completeRevisionOperation(reservation);
     console.log(`Rolled back: ${targetName(reservation.target)}`);
   } catch (error) {
     console.error(`Error: ${(error as Error).message}`);

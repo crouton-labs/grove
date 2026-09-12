@@ -31,17 +31,3 @@ export async function reserveRevisionOperation(target: GroveTarget, pending: Rev
   });
   return { target: current, id, pending };
 }
-
-/** Clear this command's reservation only after its entire operation succeeds. */
-export async function completeRevisionOperation(reservation: ReservedRevisionOperation): Promise<void> {
-  await withRegistryLock(async (registry) => {
-    const current = currentRegisteredTarget(registry, reservation.target);
-    const instance = current.instance!;
-    if (instance.pending !== reservation.pending || instance.pendingOperation?.id !== reservation.id) {
-      throw new Error(`${current.projectName}/${instance.name} is no longer being ${reservation.pending}`);
-    }
-    delete instance.pending;
-    delete instance.pendingOperation;
-    await saveRegistry(registry);
-  });
-}
