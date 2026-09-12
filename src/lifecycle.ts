@@ -5,6 +5,7 @@ import { GROVE_CONFIG_FILE, loadRepoConfig, resolveDevCommand, type LifecycleRol
 import { groveContextEnv } from "./context.js";
 import { computePorts } from "./ports.js";
 import { assertTargetUsable, targetName, targetSlot, type GroveTarget } from "./target.js";
+import type { GroveInstance } from "./types.js";
 
 export interface LifecyclePlan {
   command: string;
@@ -23,8 +24,8 @@ export interface LifecycleRun {
  * Resolve a lifecycle role into the argv grove will run. The mapping is read
  * from the project's registered source config, never from an instance's copy.
  */
-export function planLifecycle(target: GroveTarget, role: LifecycleRole): LifecyclePlan {
-  assertTargetUsable(target);
+export function planLifecycle(target: GroveTarget, role: LifecycleRole, allowedPending?: GroveInstance["pending"]): LifecyclePlan {
+  assertTargetUsable(target, allowedPending);
   const sourceConfigFile = target.project.configFile ?? GROVE_CONFIG_FILE;
   const sourceConfig = loadRepoConfig(target.project.source, sourceConfigFile);
   const argv = sourceConfig?.lifecycle?.[role];
@@ -51,8 +52,8 @@ export function planLifecycle(target: GroveTarget, role: LifecycleRole): Lifecyc
 }
 
 /** Run a lifecycle role with the caller's stdio, returning its exit code. */
-export function dispatchLifecycle(target: GroveTarget, role: LifecycleRole): number {
-  const plan = planLifecycle(target, role);
+export function dispatchLifecycle(target: GroveTarget, role: LifecycleRole, allowedPending?: GroveInstance["pending"]): number {
+  const plan = planLifecycle(target, role, allowedPending);
   const result = spawnSync(plan.command, plan.argv, { cwd: plan.cwd, env: plan.env, stdio: "inherit" });
   if (result.error) throw new Error(`failed to run devCommand: ${result.error.message}`);
   if (result.signal) return 128 + os.constants.signals[result.signal];

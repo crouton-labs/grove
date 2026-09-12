@@ -13,6 +13,7 @@ export interface GroveApplied {
   configHash: string;
   at: string;
   code: Record<string, { branch: string | null; commit: string }> | null;
+  rolledBackFrom?: string;
 }
 
 export interface GrovePendingOperation {
@@ -36,13 +37,25 @@ export interface GroveInstance {
    */
   needsState?: string;
   /** Present while an operation has reserved this instance's slot. */
-  pending?: "planting" | "uprooting" | "applying" | "restoring";
+  pending?: "planting" | "uprooting" | "applying" | "restoring" | "rolling-out" | "rolling-back";
   /** Identifies the specific plant attempt that owns a pending reservation. */
   reservationId?: string;
   /** Identifies the process and restore request that own an apply or restore reservation. */
   pendingOperation?: GrovePendingOperation;
   spec: GroveInstanceSpec;
-  applied: GroveApplied | null;
+  /** Newest first; retained revisions are capped at ten. */
+  history: GroveApplied[];
+}
+
+/** Return an instance's newest recorded revision. */
+export function currentApplied(instance: Pick<GroveInstance, "history"> | undefined): GroveApplied | null {
+  return instance?.history[0] ?? null;
+}
+
+/** Add a revision while retaining the ten newest records. */
+export function recordApplied(instance: GroveInstance, applied: GroveApplied): void {
+  instance.history.unshift(applied);
+  instance.history.splice(10);
 }
 
 export interface GroveProjectConfig {

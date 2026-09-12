@@ -12,9 +12,19 @@ import { loadSettings } from "../settings.js";
 import { applyExistingCheckoutSetup, describeAppliedCode } from "../setup.js";
 import { activePendingOperationError, isPendingInstanceOperationActive } from "../state.js";
 import { assertTargetUsable, type GroveTarget, targetSlot } from "../target.js";
+import { recordApplied } from "../types.js";
 
 interface ApplyOptions extends TargetingOptions {
   force?: boolean;
+}
+
+export interface ApplyTargetOptions {
+  force?: boolean;
+  /** Keep a rollout or rollback reservation in place while apply records its revision. */
+  pendingOperation?: { pending: "rolling-out" | "rolling-back"; id: string };
+  rolledBackFrom?: string;
+  /** Runs after setup but before this function records the revision. */
+  afterSetup?: (target: GroveTarget) => void | Promise<void>;
 }
 
 /** Converge an existing instance's Grove-owned configuration without touching code or state. */
@@ -30,7 +40,7 @@ export async function apply(targetOrProject: string | undefined, options: ApplyO
   }
 }
 
-export async function applyTarget(target: GroveTarget, options: Pick<ApplyOptions, "force">): Promise<number> {
+export async function applyTarget(target: GroveTarget, options: ApplyTargetOptions): Promise<number> {
   if (!target.instance) {
     throw new Error(`${target.projectName} is the project source; grove apply needs a planted instance (for example ${target.projectName}/1)`);
   }
@@ -38,9 +48,13 @@ export async function applyTarget(target: GroveTarget, options: Pick<ApplyOption
   const operation = { id: operationId, pid: process.pid };
   const reserved = await withRegistryLock(async (registry) => {
     const current = currentRegisteredTarget(registry, target);
-    assertTargetUsable(current, "applying");
+    assertTargetUsable(current, options.pendingOperation?.pending ?? "applying");
     const targetInstance = current.instance!;
-    if (targetInstance.pending === "applying" && isPendingInstanceOperationActive(targetInstance)) {
+    if (options.pendingOperation) {
+      if (targetInstance.pending !== options.pendingOperation.pending || targetInstance.pendingOperation?.id !== options.pendingOperation.id) {
+        throw new Error(`${current.projectName}/${targetInstance.name} is no longer being ${options.pendingOperation.pending}`);
+      }
+    } else if (targetInstance.pending === "applying" && isPendingInstanceOperationActive(targetInstance)) {
       throw new Error(activePendingOperationError(current.projectName, targetInstance));
     }
     const configFile = current.project.configFile ?? GROVE_CONFIG_FILE;
@@ -62,9 +76,11 @@ export async function applyTarget(target: GroveTarget, options: Pick<ApplyOption
     groveContextEnv(context, process.env, settings);
     assertRepositoriesReadyForApply(current.root, sourceConfig?.repos, options.force === true);
 
-    targetInstance.pending = "applying";
-    targetInstance.pendingOperation = operation;
-    await saveRegistry(registry);
+    if (!options.pendingOperation) {
+      targetInstance.pending = "applying";
+      targetInstance.pendingOperation = operation;
+      await saveRegistry(registry);
+    }
     return { current, targetInstance, configFile, sourceConfig, settings, context };
   });
 
@@ -78,20 +94,26 @@ export async function applyTarget(target: GroveTarget, options: Pick<ApplyOption
     reserved.context,
     reserved.settings,
   );
+  await options.afterSetup?.(reserved.current);
 
   await withRegistryLock(async (registry) => {
     const current = currentRegisteredTarget(registry, target);
     const targetInstance = current.instance!;
-    if (targetInstance.pending !== "applying" || targetInstance.pendingOperation?.id !== operationId) {
+    const expectedPending = options.pendingOperation?.pending ?? "applying";
+    const expectedOperationId = options.pendingOperation?.id ?? operationId;
+    if (targetInstance.pending !== expectedPending || targetInstance.pendingOperation?.id !== expectedOperationId) {
       throw new Error(`${current.projectName}/${targetInstance.name} is no longer being applied by this command`);
     }
-    targetInstance.applied = {
+    recordApplied(targetInstance, {
       configHash: configHash(reserved.sourceConfig),
       at: new Date().toISOString(),
       code: describeAppliedCode(current.root, reserved.sourceConfig?.repos),
-    };
-    delete targetInstance.pending;
-    delete targetInstance.pendingOperation;
+      ...(options.rolledBackFrom ? { rolledBackFrom: options.rolledBackFrom } : {}),
+    });
+    if (!options.pendingOperation) {
+      delete targetInstance.pending;
+      delete targetInstance.pendingOperation;
+    }
     await saveRegistry(registry);
   });
 

@@ -90,7 +90,7 @@ The two intentional launches are `grove plant <project> onboarding` — configur
 
 ## Apply and configuration drift
 
-Every planted instance records its requested `spec` (`codeFrom`, state `from`, and `labels`) and what Grove last applied: a SHA-256 `configHash`, time, and the branch and commit in each configured repository. The hash is the canonical JSON of the validated source config: object keys are sorted recursively and arrays retain their declared order. Whitespace and object-key order therefore do not make an instance stale.
+Every planted instance records its requested `spec` (`codeFrom`, state `from`, and `labels`) and a newest-first history of its last ten applied revisions. Each revision has a SHA-256 `configHash`, time, and the branch and commit in each configured repository. The newest revision is the current applied record. The hash is the canonical JSON of the validated source config: object keys are sorted recursively and arrays retain their declared order. Whitespace and object-key order therefore do not make an instance stale.
 
 `grove apply <project/instance>` converges an existing checkout without cloning code or changing data state. It can also select a fleet as described in [Labels, selectors, and fan-out](#labels-selectors-and-fan-out). It reruns `copyFromSource`, `secrets`, `patchPortsIn`, `substituteIn`, `install`, and `setup.sh`, then records the current validated source config as applied. It refuses the source checkout and an instance being planted, uprooted, or restored. It marks an instance `applying` before setup without holding the registry lock during setup; if interrupted, re-run `grove apply <project/instance>` to complete it. It also refuses a source port contract that differs from the registered project ports (run `grove register --update` first), any configured repository that is not a Git checkout, and tracked repository changes; pass `--force` only when overwriting tracked changes is intended. Untracked files are not a refusal and `copyFromSource` may overwrite them.
 
@@ -107,6 +107,12 @@ The `start`, `stop`, `status`, `reset`, `restore`, `apply`, `uproot`, and `label
 A selector or `--all` walks selected instances sequentially in slot order. Grove stops at the first non-zero exit and prints a summary showing each target that succeeded, failed, or never started. `grove uproot -l ...` and `grove uproot --all` require `--force`; explicit `grove uproot <project/name>` retains its confirmation prompt.
 
 For `restore`, use `grove restore <target> <ref>` for one target and `grove restore [project] <ref> -l ...` or `grove restore [project] <ref> --all` for a set. For `label`, use `grove label [project] key=value ... -l ...` or `grove label [project] key=value ... --all` for a set.
+
+## Rollout and rollback
+
+`grove rollout <project>` moves every planted instance in the project forward in slot order. Use `-l key=value[,key=value]` to select matching labels or `--all` to state the default explicitly. Before touching an instance, rollout refuses if any configured repository has tracked changes. It fetches and fast-forwards every configured repository to its configured branch, runs `apply`, then runs lifecycle `stop` and `start` when both are declared. When lifecycle `status` is declared, it must exit 0. Rollout stops at the first failure, names that instance, and leaves later instances unstarted.
+
+`grove rollback <project/instance>` is the single-instance escape hatch. It refuses tracked changes and requires at least two recorded revisions. Grove checks out every configured repository on the previous revision's recorded branch and commit, reruns `apply`, and records a new revision with `rolledBackFrom` set to the timestamp of the revision it replaced.
 
 ## State
 
@@ -184,6 +190,8 @@ grove register <source> [--config <relative-path>] [--update]
 grove dev [--at <target>] [raw argv...]
 grove plant <project> [name] [--slot <n>] [--code-from <mode>] [--from <ref>] [--ignore-fingerprint] [--label <key=value>...]
 grove apply [target-or-project] [-l <key=value[,key=value]> | --all] [--force]
+grove rollout <project> [-l <key=value[,key=value]> | --all]
+grove rollback <project/instance>
 grove adopt <project> <name> <path> [--slot <n>]
 grove list [project] [--json]
 grove open [target] [--json]

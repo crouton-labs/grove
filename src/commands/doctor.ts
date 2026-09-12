@@ -13,7 +13,7 @@ import { configHash } from "../intent.js";
 import { inspectScopedEnv } from "../env.js";
 import { instanceContext, pendingResolution, sourceContext } from "../state.js";
 import type { GroveExecutionContext } from "../context.js";
-import type { GroveProjectConfig } from "../types.js";
+import { currentApplied, type GroveProjectConfig } from "../types.js";
 
 export async function doctor(project?: string) {
   const registry = loadRegistry();
@@ -71,7 +71,8 @@ export async function doctor(project?: string) {
           );
           failures++;
         }
-        if (inst.applied && sourceConfigHash !== undefined && inst.applied.configHash !== sourceConfigHash) {
+        const applied = currentApplied(inst);
+        if (applied && sourceConfigHash !== undefined && applied.configHash !== sourceConfigHash) {
           console.log(`    \x1b[33m⚠\x1b[0m built from older config — grove apply ${name}/${inst.name}`);
           failures++;
         }

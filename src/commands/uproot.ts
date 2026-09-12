@@ -35,7 +35,7 @@ export async function uprootTarget(target: GroveTarget, options: Pick<UprootOpti
     throw new Error(`${target.projectName} is the project source; grove uproot needs a planted instance`);
   }
   const { project: proj, projectName: project, instance } = target;
-  if (instance.pending === "applying" || instance.pending === "restoring") {
+  if (instance.pending === "applying" || instance.pending === "restoring" || instance.pending === "rolling-out" || instance.pending === "rolling-back") {
     throw new Error(pendingError(project, instance));
   }
   const instanceName = instance.name;
@@ -90,7 +90,7 @@ export async function uprootTarget(target: GroveTarget, options: Pick<UprootOpti
       throw new Error(`${project}/${instanceName} is no longer registered`);
     }
     const currentInstance = currentProject.instances[currentIndex];
-    if (currentInstance.pending === "applying" || currentInstance.pending === "restoring") {
+    if (currentInstance.pending === "applying" || currentInstance.pending === "restoring" || currentInstance.pending === "rolling-out" || currentInstance.pending === "rolling-back") {
       throw new Error(pendingError(project, currentInstance));
     }
     currentInstance.pending = "uprooting";

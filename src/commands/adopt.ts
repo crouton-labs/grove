@@ -85,7 +85,7 @@ export async function adopt(
         slot,
         created: new Date().toISOString(),
         spec: { codeFrom: "configured", from: "baseline", labels: {} },
-        applied: null,
+        history: [],
       });
       await saveRegistry(registry);
       regenerateAliases(registry);

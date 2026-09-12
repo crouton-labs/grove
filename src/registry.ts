@@ -2,7 +2,7 @@ import fs from "fs";
 import path from "path";
 import os from "os";
 import { randomUUID } from "crypto";
-import { GroveRegistry } from "./types.js";
+import { GroveRegistry, type GroveInstance } from "./types.js";
 
 export const GROVE_DIR = path.join(os.homedir(), ".grove");
 export const REGISTRY_PATH = path.join(GROVE_DIR, "grove.json");
@@ -29,20 +29,23 @@ export function loadRegistry(): GroveRegistry {
   return upgradeRegistry(JSON.parse(fs.readFileSync(REGISTRY_PATH, "utf-8")) as GroveRegistry);
 }
 
-/** Upgrade the version-less registry shape in memory; the next save publishes v2. */
+/** Upgrade legacy registry shapes in memory; the next save publishes the normalized form. */
 function upgradeRegistry(registry: GroveRegistry): GroveRegistry {
-  if (registry.version === undefined) {
-    registry.version = 2;
-    for (const project of Object.values(registry.projects)) {
-      for (const instance of project.instances) {
-        instance.spec ??= { codeFrom: "configured", from: "baseline", labels: {} };
-        instance.applied ??= null;
-      }
-    }
-    return registry;
-  }
+  if (registry.version === undefined) registry.version = 2;
   if (registry.version !== 2) {
     throw new Error(`unsupported registry version ${registry.version} at ${REGISTRY_PATH}`);
+  }
+  for (const project of Object.values(registry.projects)) {
+    for (const instance of project.instances) {
+      const legacy = instance as GroveInstance & { applied?: GroveInstance["history"][number] | null };
+      instance.spec ??= { codeFrom: "configured", from: "baseline", labels: {} };
+      const history = Array.isArray(instance.history) ? instance.history : [];
+      if (legacy.applied && !history.some((record) => record.at === legacy.applied!.at)) {
+        history.unshift(legacy.applied);
+      }
+      instance.history = history.slice(0, 10);
+      delete legacy.applied;
+    }
   }
   return registry;
 }

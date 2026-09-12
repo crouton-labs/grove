@@ -9,6 +9,8 @@ import { GROVE_CONFIG_EXAMPLE, GROVE_CONFIG_FILE } from "./config.js";
 import { dev } from "./commands/dev.js";
 import { plant } from "./commands/plant.js";
 import { apply } from "./commands/apply.js";
+import { rollout } from "./commands/rollout.js";
+import { rollback } from "./commands/rollback.js";
 import { uproot } from "./commands/uproot.js";
 import { list } from "./commands/list.js";
 import { adopt } from "./commands/adopt.js";
@@ -139,6 +141,20 @@ program
   .option("--force", "Apply even when a target repo has tracked changes")
   .addHelpText("after", `\n${TARGETING_HELP}\n\nApply reruns copyFromSource, secrets, patchPortsIn, substituteIn, install, and setup.sh for an existing instance. It never clones code or applies state. It refuses the project source, or an instance being planted, uprooted, or restored. If setup is interrupted, re-run apply to complete it. It also refuses a source port contract that differs from the registration (run grove register --update), configured repositories that are not Git checkouts, and tracked changes unless --force; --force does not waive checkout validation. Untracked files may be overwritten by copyFromSource.\n`)
   .action(apply);
+
+program
+  .command("rollout <project>")
+  .description("Fast-forward a project fleet, apply it, and verify lifecycle status")
+  .option("-l, --selector <key=value[,key=value]>", "Select instances whose labels all match")
+  .option("--all", "Select every planted instance (the default)")
+  .addHelpText("after", `\nRollout selects every planted instance by default, or narrows the fleet with -l. It runs in slot order and stops at the first failure. Before changing an instance it refuses any tracked repository changes, then fetches and fast-forwards every configured repository to its configured branch, runs apply, runs lifecycle stop then start when both are declared, and requires lifecycle status to exit 0 when declared.\n`)
+  .action(rollout);
+
+program
+  .command("rollback <target>")
+  .description("Move one instance back to its previous recorded revision and apply it")
+  .addHelpText("after", `\nRollback accepts one planted target only. It refuses tracked repository changes and requires at least two recorded revisions. It checks out every configured repository at the previous revision's recorded commit, reruns apply, and records the rollback with the timestamp it rolled back from.\n`)
+  .action(rollback);
 
 program
   .command("snapshot <project/instance> <name>")

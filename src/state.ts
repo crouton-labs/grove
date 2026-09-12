@@ -110,6 +110,18 @@ export function pendingError(projectName: string, instance: GroveInstance): stri
       `Re-run grove restore ${projectName}/${instance.name} <ref> if restore was interrupted`
     );
   }
+  if (instance.pending === "rolling-out") {
+    return (
+      `${projectName}/${instance.name} is being rolled out and cannot be used. ` +
+      `Re-run grove rollout ${projectName} --all if rollout was interrupted`
+    );
+  }
+  if (instance.pending === "rolling-back") {
+    return (
+      `${projectName}/${instance.name} is being rolled back and cannot be used. ` +
+      `Re-run grove rollback ${projectName}/${instance.name} if rollback was interrupted`
+    );
+  }
   return (
     `${projectName}/${instance.name} is still planting and cannot be used. ` +
     `Remove it with: grove uproot ${projectName}/${instance.name}`
@@ -125,6 +137,8 @@ export function pendingResolution(projectName: string, instance: {
   if (instance.pending === "planting") return `Remove with: grove uproot ${shellArgument(target)}`;
   if (instance.pending === "uprooting") return `Re-run with: grove uproot ${shellArgument(target)}`;
   if (instance.pending === "applying") return `Re-run with: grove apply ${shellArgument(target)}`;
+  if (instance.pending === "rolling-out") return `Re-run with: grove rollout ${shellArgument(projectName)} --all`;
+  if (instance.pending === "rolling-back") return `Re-run with: grove rollback ${shellArgument(target)}`;
   const restore = instance.pendingOperation?.restore;
   return `Re-run with: grove restore ${shellArgument(target)} ${shellArgument(restore?.ref ?? "<ref>")}`;
 }

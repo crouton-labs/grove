@@ -34,7 +34,7 @@ import {
   sourceContext,
   type StateRef,
 } from "../state.js";
-import type { GroveApplied, GroveInstance } from "../types.js";
+import { recordApplied, type GroveApplied, type GroveInstance } from "../types.js";
 import { configHash } from "../intent.js";
 import { parseLabelAssignments } from "../selection.js";
 
@@ -233,7 +233,7 @@ export async function plant(
       pending: "planting",
       reservationId,
       spec: { codeFrom, from: options.from ?? BASELINE_REF, labels },
-      applied: null,
+      history: [],
     };
     if (pendingRef) instance.needsState = pendingRef;
     currentProject.instances.push(instance);
@@ -378,7 +378,7 @@ export async function plant(
       delete instance.pending;
       delete instance.reservationId;
       delete instance.needsState;
-      instance.applied = applied;
+      recordApplied(instance, applied);
       await saveRegistry(currentRegistry);
       regenerateAliases(currentRegistry);
     });
