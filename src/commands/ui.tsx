@@ -21,9 +21,13 @@ const LOG_LINES = 12;
 const STATUS_PREFIX_WIDTH = 8;
 /** Empty rows shown by default, which keeps every digit key 0-9 on a row. */
 const DEFAULT_SLOT_WINDOW = 9;
-/** Terminal rows the table cannot have: the chrome statusRowBudget subtracts, plus one status row. */
-const RESERVED_ROWS = 10;
-/** The STATE column, wide enough for the longest single word plus a second short one. */
+/** Rows outside the variable region: the title, the column header, two dividers, the message line, and both footers. */
+const CHROME_ROWS = 7;
+/** The detail pane's fixed lines: the target header and the repos line. */
+const DETAIL_FIXED_ROWS = 2;
+/** Terminal rows the table cannot have: the chrome, the detail pane's fixed lines, and one status row. */
+const RESERVED_ROWS = CHROME_ROWS + DETAIL_FIXED_ROWS + 1;
+/** The STATE column: the longest reachable combination, `stale pool`, plus a trailing space. */
 const STATE_WIDTH = 12;
 
 export async function ui(projectRef?: string): Promise<void> {
@@ -314,9 +318,20 @@ function App({ projectName }: { projectName: string }) {
   }, [running]);
 
   const terminalRows = stdout?.rows ?? 24;
+  // The variable region is sized before the table, so the lines the selected row (or the help pane)
+  // adds come out of the table rather than off the top of the frame. The selected target is read
+  // from the project rather than from the rows the cap produces, which would be circular; when the
+  // cap drops the selected row the index below falls back to the source row, whose detail pane is
+  // never taller than what was reserved.
+  const selectedTarget = project
+    ? slot === 0
+      ? project.source_target
+      : project.instances.find((instance) => instance.slot === slot) ?? null
+    : null;
+  const extraRows = help ? HELP_EXTRA_ROWS : extraDetailRows(selectedTarget);
   const { rows, hidden } = useMemo(
-    () => (project ? buildRows(project, terminalRows) : { rows: [] as Row[], hidden: 0 }),
-    [project, terminalRows],
+    () => (project ? buildRows(project, terminalRows - extraRows) : { rows: [] as Row[], hidden: 0 }),
+    [project, terminalRows, extraRows],
   );
   const index = Math.max(0, rows.findIndex((row) => row.slot === slot));
   const row = rows[index] as Row | undefined;
@@ -368,7 +383,8 @@ function App({ projectName }: { projectName: string }) {
    */
   const runRole = useCallback(
     (role: LifecycleRole, confirmPrompt?: string) => {
-      if (!target || !row) return setMessage(`slot ${row?.slot} has no instance — press p to plant one.`);
+      if (!row) return;
+      if (!target) return setMessage(`slot ${row.slot} has no instance — press p to plant one.`);
       try {
         planLifecycle(toGroveTarget(projectName, row, target), role);
       } catch (planError) {
@@ -440,12 +456,13 @@ function App({ projectName }: { projectName: string }) {
 
   /** The instance ref for an action that needs one, or null after naming grove's own refusal. */
   const requireInstance = (verb: string): string | null => {
-    if (row?.isSource) {
+    if (!row) return null;
+    if (row.isSource) {
       setMessage(`slot 0 is the project source — grove ${verb} needs a planted instance.`);
       return null;
     }
     if (!target) {
-      setMessage(`slot ${row?.slot} has no instance — press p to plant one.`);
+      setMessage(`slot ${row.slot} has no instance — press p to plant one.`);
       return null;
     }
     return targetRef;
@@ -482,14 +499,16 @@ function App({ projectName }: { projectName: string }) {
         return prompt.submit(value);
       }
       if (key.backspace || key.delete) return setPrompt({ ...prompt, value: prompt.value.slice(0, -1) });
-      // Label keys, label values, and a pool size are all printable ASCII, so anything else a
-      // terminal sends — an arrow's escape sequence, a control byte — is dropped rather than typed.
-      const typed = input.replace(/[^\x20-\x7e]/g, "");
+      // Only control bytes are dropped: ink already delivers an empty string for every special key,
+      // and a label value may be any printable text, so filtering further would silently mangle one.
+      const typed = input.replace(/[\x00-\x1f\x7f]/g, "");
       if (typed && !key.ctrl && !key.meta) return setPrompt({ ...prompt, value: prompt.value + typed });
       return;
     }
     if (input === "q" || key.escape) return exit();
     if (input === "?") return setHelp(true);
+    // Until the first gather lands there is no table, so nothing below this line has a row to act on.
+    if (!row) return;
     if (key.upArrow || input === "k") {
       const next = rows[Math.max(0, index - 1)];
       if (next) setSlot(next.slot);
@@ -520,15 +539,13 @@ function App({ projectName }: { projectName: string }) {
       return runRole("reset", `Run the project's reset on ${targetRef}? (y/n)`);
     }
     if (input === "p") {
-      if (row?.isSource) return setMessage("slot 0 is the project source — it cannot be planted over.");
-      if (target) return setMessage(`slot ${row?.slot} already holds ${targetRef} — uproot it first.`);
-      const plantSlot = row?.slot;
-      if (plantSlot === undefined) return;
-      return runGrove(`plant ${projectName} slot ${plantSlot}`, ["plant", projectName, "--slot", String(plantSlot)]);
+      if (row.isSource) return setMessage("slot 0 is the project source — it cannot be planted over.");
+      if (target) return setMessage(`slot ${row.slot} already holds ${targetRef} — uproot it first.`);
+      return runGrove(`plant ${projectName} slot ${row.slot}`, ["plant", projectName, "--slot", String(row.slot)]);
     }
     if (input === "u") {
-      if (row?.isSource) return setMessage("slot 0 is the project source — grove uproot would delete the project checkout.");
-      if (!target) return setMessage(`slot ${row?.slot} has no instance.`);
+      if (row.isSource) return setMessage("slot 0 is the project source — grove uproot would delete the project checkout.");
+      if (!target) return setMessage(`slot ${row.slot} has no instance.`);
       return runGrove(
         `uproot ${targetRef}`,
         ["uproot", targetRef, "--force"],
@@ -575,6 +592,11 @@ function App({ projectName }: { projectName: string }) {
         value: "",
         submit: (value) => {
           const words = value.split(/\s+/);
+          // The prompt takes labels, not options: an option typed here would run a verb the prompt
+          // does not name — `--rm` in the add prompt removes — so it is refused before argv is built.
+          if (words.some((word) => word.startsWith("-"))) {
+            return setMessage(`${removing ? "remove labels" : "label"} takes ${removing ? "keys" : "key=value pairs"}, not options.`);
+          }
           return runGrove(`label ${ref}`, ["label", ref, ...(removing ? words.flatMap((word) => ["--rm", word]) : words)]);
         },
       });
@@ -585,16 +607,20 @@ function App({ projectName }: { projectName: string }) {
         label: `pool ${projectName} --size`,
         hint: "how many ready instances the pool should hold",
         value: "",
-        submit: (size) =>
-          runGrove(
+        submit: (size) => {
+          // Grove's own rule, checked before the confirmation: a size it will refuse must not be
+          // authorised as if it were work about to happen.
+          if (!/^\d+$/.test(size)) return setMessage("--size must be a non-negative safe integer");
+          return runGrove(
             `pool ${projectName} --size ${size}`,
             ["pool", projectName, "--size", size],
             `Plant ${projectName} until ${size} ready instances exist? (y/n)`,
-          ),
+          );
+        },
       });
     }
     if (input === "o") {
-      if (!target) return setMessage(`slot ${row?.slot} has no instance — press p to plant one.`);
+      if (!target) return setMessage(`slot ${row.slot} has no instance — press p to plant one.`);
       try {
         switchToSession(target.tmuxSession, target.path);
       } catch (switchError) {
@@ -616,7 +642,8 @@ function App({ projectName }: { projectName: string }) {
 
   const width = stdout?.columns ?? 100;
   const declares = (role: LifecycleRole) => Boolean(target?.lifecycle.includes(role));
-  const statusBudget = statusRowBudget(terminalRows, rows.length + (hidden > 0 ? 1 : 0), extraDetailRows(target));
+  const tableRows = rows.length + (hidden > 0 ? 1 : 0);
+  const statusBudget = statusRowBudget(terminalRows, tableRows, extraDetailRows(target));
   const poolState = poolCounts(project);
   const instanceSelected = Boolean(target) && !row.isSource;
 
@@ -641,7 +668,7 @@ function App({ projectName }: { projectName: string }) {
       {help ? (
         <HelpPane />
       ) : action ? (
-        <ActionPane action={action} />
+        <ActionPane action={action} budget={variableRegionRows(terminalRows, tableRows)} />
       ) : (
         <DetailPane
           project={project}
@@ -848,14 +875,21 @@ function DetailPane({
 }
 
 /**
- * How many terminal rows the status region may occupy. Everything else on screen is one row each:
- * the title, the column header, every table row (each slot, plus the dropped-rows notice when there
- * is one), two dividers, the message line, both footer lines, and the detail pane's target and repos
- * lines. `extraDetailRows` is every further detail line the selected row brings with it, which the
- * status region must not spend.
+ * How many terminal rows the variable region — the detail pane, the action pane, or help — may
+ * occupy. Everything else on screen is one row each: the title, the column header, every table row
+ * (each slot, plus the dropped-rows notice when there is one), two dividers, the message line, and
+ * both footer lines.
+ */
+function variableRegionRows(terminalRows: number, tableRows: number): number {
+  return Math.max(1, terminalRows - tableRows - CHROME_ROWS);
+}
+
+/**
+ * How many of the variable region's rows the status region may occupy: what is left after the
+ * detail pane's fixed lines and every further detail line the selected row brings with it.
  */
 function statusRowBudget(terminalRows: number, tableRows: number, extraDetailRows: number): number {
-  return Math.max(0, terminalRows - (tableRows + extraDetailRows + 9));
+  return Math.max(0, variableRegionRows(terminalRows, tableRows) - DETAIL_FIXED_ROWS - extraDetailRows);
 }
 
 /** Detail lines beyond the header and repos lines the status budget already accounts for. */
@@ -932,8 +966,14 @@ function StatusLines({ lines, budget, width }: { lines: string[]; budget: number
   );
 }
 
-function ActionPane({ action }: { action: ActionState }) {
+/** The action's title and exit line, which every action pane shows before any output. */
+const ACTION_FIXED_ROWS = 2;
+
+function ActionPane({ action, budget }: { action: ActionState; budget: number }) {
   const elapsed = Math.round((Date.now() - action.startedAt) / 1000);
+  // The most recent output, cut to the region rather than to LOG_LINES: a chatty child — claim
+  // prints its whole grove-output block — would otherwise push the footer off the screen.
+  const shown = action.lines.slice(-Math.max(0, budget - ACTION_FIXED_ROWS));
   return (
     <Box flexDirection="column">
       <Text wrap="truncate-end">
@@ -947,7 +987,7 @@ function ActionPane({ action }: { action: ActionState }) {
           <Text color={action.exit === 0 ? "green" : "red"}>{`exit ${action.exit} after ${elapsed}s`}</Text>
         )}
       </Text>
-      {action.lines.map((line, lineIndex) => (
+      {shown.map((line, lineIndex) => (
         <Text key={lineIndex} dimColor wrap="truncate-end">
           {line}
         </Text>
@@ -956,18 +996,30 @@ function ActionPane({ action }: { action: ActionState }) {
   );
 }
 
+/** Every line fits an 80-column terminal and truncates rather than wraps, so the pane is exactly this many rows. */
+const HELP_LINES = [
+  "keys — * confirms first · q or Esc quits · Ctrl-C interrupts an action",
+  "↑/k ↓/j move · 0-9 jump to a row · o tmux session · R fetch and re-read",
+  "p plant · u uproot* · s start · S stop · r reset* · t status verb",
+  "a apply the source config* · A apply over tracked changes* · b roll back*",
+  "e release into the pool* · E release discarding repo changes*",
+  "l add labels · L remove labels · project: c claim · P grow the pool*",
+  "STATE: no-state state never applied · stale older config · pool ready",
+];
+
+/**
+ * What help costs the table beyond the detail pane it replaces, so the frame still fits. A terminal
+ * shorter than CHROME_ROWS + HELP_LINES.length + the table's two-row floor cannot hold both, and the
+ * floor wins: help is the screen the user asked for, and the table keeps saying how many slots it hid.
+ */
+const HELP_EXTRA_ROWS = HELP_LINES.length - DETAIL_FIXED_ROWS;
+
 function HelpPane() {
   return (
     <Box flexDirection="column">
-      {/* Every line fits an 80-column terminal and truncates rather than wraps, so the pane is
-          always exactly as tall as it looks here and the footer stays on screen. */}
-      <Text bold wrap="truncate-end">keys — * confirms first · q or Esc quits · Ctrl-C interrupts an action</Text>
-      <Text wrap="truncate-end">↑/k ↓/j move · 0-9 jump to a row · o tmux session · R fetch and re-read</Text>
-      <Text wrap="truncate-end">p plant · u uproot* · s start · S stop · r reset* · t status verb</Text>
-      <Text wrap="truncate-end">a apply the source config* · A apply over tracked changes* · b roll back*</Text>
-      <Text wrap="truncate-end">e release into the pool* · E release discarding repo changes*</Text>
-      <Text wrap="truncate-end">l add labels · L remove labels · project: c claim · P grow the pool*</Text>
-      <Text wrap="truncate-end">STATE: no-state state never applied · stale older config · pool ready</Text>
+      {HELP_LINES.map((line, lineIndex) => (
+        <Text key={line} bold={lineIndex === 0} wrap="truncate-end">{line}</Text>
+      ))}
     </Box>
   );
 }

@@ -5,6 +5,7 @@ import { parseLabelAssignments } from "../selection.js";
 import { describeRecordedRepos } from "../setup.js";
 import { hasStateCommand, instanceContext } from "../state.js";
 import { currentApplied } from "../types.js";
+import { isPoolReady } from "./pool.js";
 
 interface ClaimOptions {
   label?: string[];
@@ -17,7 +18,7 @@ export async function claim(projectName: string, options: ClaimOptions): Promise
       const project = registry.projects[projectName];
       if (!project) throw new Error(`project "${projectName}" not registered`);
       const instance = project.instances
-        .filter((candidate) => candidate.spec.labels["grove.pool"] === "ready" && !candidate.pending && !candidate.needsState)
+        .filter(isPoolReady)
         .sort((a, b) => a.slot - b.slot || a.name.localeCompare(b.name))[0];
       if (!instance) {
         throw new Error(`no ready instance in pool "${projectName}"; create one with: grove pool ${projectName} --size 1`);

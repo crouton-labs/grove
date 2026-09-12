@@ -110,7 +110,7 @@ For `restore`, use `grove restore <target> <ref>` for one target and `grove rest
 
 ## Warm pool
 
-`grove pool <project>` shows the number of ready instances, their slots, and the number of claimed instances. `grove pool <project> --size N` plants with configured code and baseline state until N completed instances carry `grove.pool=ready`. It only grows; a pool already at or above the requested size is left unchanged. An in-progress plant counts toward the size, so concurrent `grove pool` runs do not overshoot; an interrupted plant keeps counting until you remove it with `grove uproot <project/name> --force`.
+`grove pool <project>` shows the number of ready instances, their slots, and the number of claimed instances. Ready means claimable: exactly what `grove claim` will hand out, so an in-progress plant is not counted ready. `grove pool <project> --size N` plants with configured code and baseline state until N completed instances carry `grove.pool=ready`. It only grows; a pool already at or above the requested size is left unchanged. An in-progress plant does count toward that size, so concurrent `grove pool` runs do not overshoot; an interrupted plant keeps counting until you remove it with `grove uproot <project/name> --force`.
 
 `grove claim <project> [--label key=value...]` atomically takes the lowest-slot ready instance, removes `grove.pool=ready`, and adds the supplied labels. It prints the same `--- grove-output ---` JSON block as `grove plant`. When no ready instance exists, grow the pool with `grove pool <project> --size N`.
 
@@ -201,7 +201,7 @@ The detail pane adds the selected instance's `intent` — its requested code mod
 
 Every action runs Grove's own CLI as a child and shows the resolved argv, a rising elapsed count, and the child's output in the pane below the table; `Ctrl-C` interrupts it and leaves the UI running, and the inventory is re-read when it exits. Actions act on one target: `c` and `P` on the project, everything else on the selected row. `grove ui` has no `rollout` and no selector fan-out — use `grove rollout` and `-l`/`--all` from the command line for those.
 
-A key the selected row does not support is dimmed in the footer and answers with the same refusal Grove's own command would print — `p` on an occupied slot, `u` or `a` on the source, or a lifecycle role the project's `lifecycle` mapping does not declare.
+A key the selected row does not support is dimmed in the footer and answers with the same refusal Grove's own command would print — `p` on an occupied slot, `u` or `a` on the source, or a lifecycle role the project's `lifecycle` mapping does not declare. A prompt refuses the same way before it confirms anything: a `--size` that is not a non-negative integer, or an option typed where it expects labels.
 
 `t` runs the project's `status` verb and shows its output verbatim in the detail pane. Grove never parses it, so a project can print whatever it likes.
 

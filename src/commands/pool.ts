@@ -15,13 +15,13 @@ export async function pool(projectName: string, options: PoolOptions): Promise<v
     }
 
     const initial = poolStatus(projectName);
-    if (initial.ready.length >= size) {
-      console.log(`Pool ${projectName} already has ${initial.ready.length} ready instance(s); requested ${size}. Nothing to do.`);
+    if (initial.filling.length >= size) {
+      console.log(`Pool ${projectName} already has ${initial.filling.length} ready or in-flight instance(s); requested ${size}. Nothing to do.`);
       return;
     }
 
-    console.log(`Growing pool ${projectName} from ${initial.ready.length} to ${size} ready instance(s).`);
-    while (poolStatus(projectName).ready.length < size) {
+    console.log(`Growing pool ${projectName} from ${initial.filling.length} to ${size} ready instance(s).`);
+    while (poolStatus(projectName).filling.length < size) {
       await plant(projectName, undefined, { label: ["grove.pool=ready"] });
     }
     printPoolStatus(projectName);
@@ -39,9 +39,9 @@ function parseSize(value: string): number {
 }
 
 /**
- * The one readiness rule `pool`, `claim`, and `grove ui` all report. An in-flight plant carries
- * needsState until it completes, so it counts; a settled instance that never got its state does
- * not, because claim refuses it.
+ * The one claimable rule `claim`, `pool`, and `grove ui` all use: labelled for the pool, settled,
+ * and holding its data state. Anything `claim` would refuse must not be counted ready anywhere,
+ * because every surface that prints the count offers claim as the next step.
  */
 export function isPoolReady(instance: {
   spec: { labels: Record<string, string> } | null;
@@ -49,18 +49,23 @@ export function isPoolReady(instance: {
   needsState?: string | null;
 }): boolean {
   if (instance.spec?.labels["grove.pool"] !== "ready") return false;
-  if (instance.pending === "planting") return true;
   return !instance.pending && !instance.needsState;
+}
+
+/** Ready, or a plant that is on its way to ready — what the growth loop counts so it does not plant over an in-flight one. */
+function isPoolFilling(instance: GroveInstance): boolean {
+  if (isPoolReady(instance)) return true;
+  return instance.spec.labels["grove.pool"] === "ready" && instance.pending === "planting";
 }
 
 function poolStatus(projectName: string) {
   const registry = loadRegistry();
   const project = registry.projects[projectName];
   if (!project) throw new Error(`project "${projectName}" not registered`);
-  const ready = project.instances
-    .filter(isPoolReady)
-    .sort((a, b) => a.slot - b.slot || a.name.localeCompare(b.name));
-  return { project, ready };
+  const bySlot = (a: GroveInstance, b: GroveInstance) => a.slot - b.slot || a.name.localeCompare(b.name);
+  const ready = project.instances.filter(isPoolReady).sort(bySlot);
+  const filling = project.instances.filter(isPoolFilling).sort(bySlot);
+  return { project, ready, filling };
 }
 
 function printPoolStatus(projectName: string): void {
