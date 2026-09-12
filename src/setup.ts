@@ -487,10 +487,11 @@ export function patchPorts(
  * Ports are arithmetic, so grove derives them; a named identity is not. A
  * reserved hostname or a namespace token is still per-instance, and a plant
  * that copies the source's value hands two instances the same external name.
- * Each rule brings its own globs, pattern, and slot-shaped replacement.
+ * Each rule brings its own globs, pattern, and replacement.
  *
- * The replacement is a `String.replace` template with `${slot}` already
- * expanded, so capture groups (`$1`, `$<name>`) still work. Slot 0 is NOT
+ * The replacement is a `String.replace` template with `${slot}` and
+ * `${machine}` already expanded, so capture groups (`$1`, `$<name>`) still
+ * work. Slot 0 is NOT
  * special-cased the way ports are: a slot-0 rewrite is what the source already
  * holds, and skipping it would make the rule's meaning depend on the slot.
  */
@@ -498,14 +499,15 @@ export function applySubstitutions(
   target: string,
   rules: SubstitutionSpec[],
   slot: number,
+  machine: string,
   configFile = GROVE_CONFIG_FILE,
 ): void {
   const compiled = rules.map((rule) => ({
     globs: rule.in,
     regex: new RegExp(rule.find, "g"),
-    // `${slot}` is not `String.replace` syntax (only `$<name>` is), so it is
-    // safe to expand textually before the replace call.
-    replacement: rule.replace.split("${slot}").join(String(slot)),
+    // `${slot}` and `${machine}` are not `String.replace` syntax (only
+    // `$<name>` is), so they are safe to expand textually before replacement.
+    replacement: rule.replace.split("${slot}").join(String(slot)).split("${machine}").join(machine),
   }));
 
   let patchedCount = 0;
@@ -548,7 +550,12 @@ interface RunCommandsOptions {
   fatal: boolean;
 }
 
-function runCommands(target: string, specs: InstallSpec[], opts: RunCommandsOptions): void {
+function runCommands(
+  target: string,
+  specs: InstallSpec[],
+  opts: RunCommandsOptions,
+  env: NodeJS.ProcessEnv,
+): void {
   for (const spec of specs) {
     const dir = path.join(target, spec.dir);
     if (!fs.existsSync(dir)) {
@@ -564,7 +571,7 @@ function runCommands(target: string, specs: InstallSpec[], opts: RunCommandsOpti
     console.log(`  Running ${opts.label} in ${spec.dir}...`);
     for (const cmd of spec.cmds) {
       try {
-        execSync(cmd, { stdio: "inherit", cwd: dir });
+        execSync(cmd, { stdio: "inherit", cwd: dir, env });
       } catch {
         if (opts.fatal) {
           throw new Error(`${opts.label} command failed in ${spec.dir}: ${cmd}`);
@@ -576,8 +583,8 @@ function runCommands(target: string, specs: InstallSpec[], opts: RunCommandsOpti
   }
 }
 
-export function runInstalls(target: string, specs: InstallSpec[]): void {
-  runCommands(target, specs, { label: "install", fatal: false });
+export function runInstalls(target: string, specs: InstallSpec[], env: NodeJS.ProcessEnv): void {
+  runCommands(target, specs, { label: "install", fatal: false }, env);
 }
 
 /**
@@ -585,6 +592,6 @@ export function runInstalls(target: string, specs: InstallSpec[]): void {
  * missing secret surfaces later as an unexplained runtime failure rather than
  * as the plant error it actually is.
  */
-export function runSecrets(target: string, specs: InstallSpec[]): void {
-  runCommands(target, specs, { label: "secrets", fatal: true });
+export function runSecrets(target: string, specs: InstallSpec[], env: NodeJS.ProcessEnv): void {
+  runCommands(target, specs, { label: "secrets", fatal: true }, env);
 }

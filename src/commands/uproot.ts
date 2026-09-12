@@ -51,6 +51,19 @@ export async function uproot(ref: string, options: UprootOptions) {
   console.log(`  Slot: ${instance.slot}`);
 
   const ports = computePorts(proj.ports, instance.slot);
+  let contextEnv: NodeJS.ProcessEnv;
+  try {
+    contextEnv = groveContextEnv({
+      source: proj.source,
+      target: instance.path,
+      slot: instance.slot,
+      instanceName,
+      ports,
+    });
+  } catch (error) {
+    console.error(`Error: ${(error as Error).message}`);
+    process.exit(1);
+  }
 
   if (Object.keys(ports).length) {
     console.log(`  Ports:`);
@@ -98,18 +111,11 @@ export async function uproot(ref: string, options: UprootOptions) {
 
       if (resolvedPath) {
         console.log(`\nRunning teardown script: ${teardownScript}`);
-        const env = groveContextEnv({
-          source: proj.source,
-          target: instance.path,
-          slot: instance.slot,
-          instanceName,
-          ports,
-        });
         try {
           execSync(`bash "${resolvedPath}"`, {
             stdio: "inherit",
             cwd: instance.path,
-            env,
+            env: contextEnv,
           });
         } catch {
           console.error("  Warning: teardown script failed.");

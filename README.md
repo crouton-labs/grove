@@ -54,12 +54,12 @@ A version 1 config can define:
   {
     "in": ["northlight/apps/core/env/crouter.*.env"],
     "find": "nl-core-g\\d+\\.ngrok\\.app",
-    "replace": "nl-core-g${slot}.ngrok.app"
+    "replace": "nl-core-${machine}-g${slot}.ngrok.app"
   }
 ]
 ```
 
-`in` is a glob list relative to the target root, `find` is a JavaScript regular expression applied globally to each matching file, and `replace` is its replacement template with `${slot}` expanded to the slot number. Capture groups (`$1`, `$<name>`) work as usual. Grove compiles `find` when it validates the config, so a bad pattern is a refusal naming the rule rather than a half-rewritten instance. Rules run after `patchPortsIn`, and never against `.grove/config.json` itself.
+`in` is a glob list relative to the target root, `find` is a JavaScript regular expression applied globally to each matching file, and `replace` is its replacement template with `${slot}` expanded to the slot number and `${machine}` expanded to the machine handle. Capture groups (`$1`, `$<name>`) work as usual. Grove compiles `find` when it validates the config, so a bad pattern is a refusal naming the rule rather than a half-rewritten instance. Rules run after `patchPortsIn`, and never against `.grove/config.json` itself.
 
 Slot 0 is not special-cased the way ports are: a rule that produces the value the source already holds simply rewrites nothing.
 
@@ -102,8 +102,10 @@ Snapshots live in `~/.grove/states/<project>/<name>/`, holding `meta.json` and w
 `~/.grove/settings.json` holds machine-level settings. It is optional, has no writer — edit it by hand — and `grove doctor` validates it.
 
 ```json
-{ "version": 1, "killTmuxSessionOnStop": true }
+{ "version": 1, "machine": "my-machine", "killTmuxSessionOnStop": true }
 ```
+
+`machine` is optional. It must match `^[a-z0-9-]{1,16}$`; when omitted, Grove uses the short hostname lowercased with every other character removed, truncated to 16 characters. Grove passes the effective value as `GROVE_MACHINE`, uses it for `${machine}` substitutions, and prints it in `grove doctor`.
 
 `killTmuxSessionOnStop` (default `false`) makes `grove stop <target>` kill the target's tmux session after the project's stop verb exits 0. The kill runs last, so the verb's output is written first, and a failed kill warns rather than failing the command — the services genuinely stopped. A non-zero stop leaves the session alone, so the window showing why it failed survives.
 
@@ -163,7 +165,7 @@ grove states [project] [--rm <name>]
 
 `grove reset <target>` runs the project's own lifecycle reset from its `lifecycle` mapping; `grove restore <target> baseline` runs the data-state reset through `stateCommand`. They are different operations — one returns the working environment to a known state, the other returns the database to its baseline.
 
-`grove dev` resolves the current directory to the longest containing registered source or instance, then directly runs that target's configured `devCommand`. Arguments are forwarded unchanged, and Grove supplies `GROVE_SOURCE`, `GROVE_TARGET`, `GROVE_SLOT`, `GROVE_INSTANCE_NAME`, `GROVE_PORTS_JSON`, and `GROVE_PORT_<NAME>` environment variables.
+`grove dev` resolves the current directory to the longest containing registered source or instance, then directly runs that target's configured `devCommand`. Arguments are forwarded unchanged, and Grove supplies `GROVE_MACHINE`, `GROVE_SOURCE`, `GROVE_TARGET`, `GROVE_SLOT`, `GROVE_INSTANCE_NAME`, `GROVE_PORTS_JSON`, and `GROVE_PORT_<NAME>` environment variables.
 
 `grove plant` prints a `--- grove-output ---` JSON block for callers that need the created path, slot, ports, state ref, and the branch and commit each repo landed on.
 

@@ -20,8 +20,8 @@ export const GROVE_CONFIG_EXAMPLE = `A project declares itself in ${GROVE_CONFIG
 version      always 1.
 devCommand   executable path relative to the project root; grove dispatches
              \`dev [args...]\` to it with cwd at the target root and env
-             GROVE_SLOT, GROVE_SOURCE, GROVE_TARGET, GROVE_INSTANCE_NAME,
-             GROVE_PORTS_JSON, and GROVE_PORT_<NAME> per port.
+             GROVE_MACHINE, GROVE_SLOT, GROVE_SOURCE, GROVE_TARGET,
+             GROVE_INSTANCE_NAME, GROVE_PORTS_JSON, and GROVE_PORT_<NAME> per port.
 ports        one entry per service: an instance in slot N gets base + N * offset
              (the source checkout is slot 0, so it serves on base).
 stateCommand optional executable path relative to the project root, answering
@@ -57,7 +57,7 @@ export interface InstallSpec {
 export interface SubstitutionSpec {
   in: string[];              // glob patterns relative to target
   find: string;              // regular expression source, applied globally
-  replace: string;           // replacement template; `${slot}` is the slot number
+  replace: string;           // replacement template; `${slot}` is the slot number and `${machine}` is the machine handle
 }
 
 export type LifecycleRole = "start" | "stop" | "status" | "reset";
@@ -365,7 +365,8 @@ export function validateRepoConfig(raw: unknown): GroveRepoConfig {
 /**
  * Validate `substituteIn`. The `find` pattern is compiled here, at config load,
  * so an unparseable regular expression is a refusal naming the rule rather than
- * a plant that dies halfway through rewriting a target.
+ * a plant that dies halfway through rewriting a target. Replacement templates
+ * may expand `${slot}` and `${machine}`.
  */
 function validateSubstitutions(raw: unknown): SubstitutionSpec[] | undefined {
   if (raw === undefined) return undefined;

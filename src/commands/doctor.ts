@@ -100,7 +100,7 @@ export async function doctor(project?: string) {
 function checkSettings(): boolean {
   try {
     const settings = loadSettings();
-    console.log(`\x1b[32m✓\x1b[0m Settings: killTmuxSessionOnStop ${settings.killTmuxSessionOnStop}`);
+    console.log(`\x1b[32m✓\x1b[0m Settings: machine ${settings.machine}, killTmuxSessionOnStop ${settings.killTmuxSessionOnStop}`);
     return true;
   } catch (error) {
     console.log(`\x1b[31m✗\x1b[0m Settings: ${(error as Error).message}`);

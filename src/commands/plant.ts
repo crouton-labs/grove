@@ -133,6 +133,21 @@ export async function plant(
     ? path.resolve(options.path)
     : path.join(baseDir, name);
 
+  const ports = computePorts(proj.ports, slot);
+  let contextEnv: NodeJS.ProcessEnv;
+  try {
+    contextEnv = groveContextEnv({
+      source: proj.source,
+      target: targetPath,
+      slot,
+      instanceName: name,
+      ports,
+    });
+  } catch (error) {
+    console.error(`Error: ${(error as Error).message}`);
+    process.exit(1);
+  }
+
   if (!options.path) {
     fs.mkdirSync(baseDir, { recursive: true });
   }
@@ -141,8 +156,6 @@ export async function plant(
     console.error(`Error: target already exists: ${targetPath}`);
     process.exit(1);
   }
-
-  const ports = computePorts(proj.ports, slot);
 
   // Resolve the state ref before any filesystem work: a typo should fail in a
   // second, not after a full clone-and-install.
@@ -257,7 +270,7 @@ export async function plant(
   if (repoConfig?.secrets) {
     console.log("Materializing secrets...");
     try {
-      runSecrets(targetPath, repoConfig.secrets);
+      runSecrets(targetPath, repoConfig.secrets, contextEnv);
     } catch (error) {
       console.error(`Error: ${(error as Error).message}`);
       process.exit(1);
@@ -274,12 +287,12 @@ export async function plant(
   // the more specific statement of the two.
   if (repoConfig?.substituteIn) {
     console.log("Applying per-slot substitutions...");
-    applySubstitutions(targetPath, repoConfig.substituteIn, slot, configFile);
+    applySubstitutions(targetPath, repoConfig.substituteIn, slot, contextEnv.GROVE_MACHINE!, configFile);
   }
 
   if (repoConfig?.install) {
     console.log("Installing dependencies...");
-    runInstalls(targetPath, repoConfig.install);
+    runInstalls(targetPath, repoConfig.install, contextEnv);
   }
 
   // --- setup.sh (runs last for anything config can't express) ---
@@ -288,16 +301,8 @@ export async function plant(
 
     console.log("Running setup script...");
 
-    const env = groveContextEnv({
-      source: proj.source,
-      target: targetPath,
-      slot,
-      instanceName: name,
-      ports,
-    });
-
     try {
-      execSync(`bash "${setupPath}"`, { stdio: "inherit", cwd: targetPath, env });
+      execSync(`bash "${setupPath}"`, { stdio: "inherit", cwd: targetPath, env: contextEnv });
     } catch {
       console.error("Warning: setup script failed. Instance will be registered but may need manual setup.");
     }
