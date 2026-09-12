@@ -10,8 +10,8 @@ import {
   isPendingInstanceOperationActive,
   pendingError,
   sameRestoreOperation,
+  applyRef,
 } from "../state.js";
-import { startPendingOperationWorker } from "../operation.js";
 import type { GrovePendingOperation } from "../types.js";
 import type { GroveTarget } from "../target.js";
 
@@ -74,10 +74,8 @@ export async function restoreTarget(
 
   console.log("");
   const operationId = randomUUID();
-  const worker = startPendingOperationWorker();
-  let reserved;
-  try {
-    reserved = await withRegistryLock(async (registry) => {
+  const operation = { id: operationId, pid: process.pid };
+  const reserved = await withRegistryLock(async (registry) => {
     const current = currentRegisteredTarget(registry, target);
     const currentInstance = current.instance!;
     const currentRef = resolveRef(current.projectName, current.project, stateRef, true);
@@ -96,9 +94,9 @@ export async function restoreTarget(
         throw new Error(pendingError(current.projectName, sourceInstance));
       }
       assertRestoreCanResume(current.projectName, sourceInstance, currentRestore);
-      reserveRestore(sourceInstance, operationId, worker.identity, currentRestore);
+      reserveRestore(sourceInstance, operation, currentRestore);
     }
-    reserveRestore(currentInstance, operationId, worker.identity, currentRestore);
+    reserveRestore(currentInstance, operation, currentRestore);
     await saveRegistry(registry);
     return {
       current,
@@ -106,19 +104,9 @@ export async function restoreTarget(
       ref: currentRef,
       sourceInstanceName: currentSourceInstanceName,
     };
-    });
-  } catch (error) {
-    worker.abort();
-    throw error;
-  }
-
-  await worker.run({
-    kind: "restore",
-    project: reserved.current.project,
-    ref: reserved.ref,
-    dest: reserved.currentDest,
-    ignoreFingerprint: options.ignoreFingerprint === true,
   });
+
+  applyRef(reserved.current.project, reserved.ref, reserved.currentDest, options.ignoreFingerprint === true);
 
   await withRegistryLock(async (registry) => {
     const current = currentRegisteredTarget(registry, target);
@@ -161,12 +149,11 @@ function assertRestoreCanResume(
 
 function reserveRestore(
   instance: NonNullable<GroveTarget["instance"]>,
-  id: string,
-  identity: Pick<GrovePendingOperation, "pid" | "processGroup" | "startedAt">,
+  operation: Pick<GrovePendingOperation, "id" | "pid">,
   restore: NonNullable<GrovePendingOperation["restore"]>,
 ): void {
   instance.pending = "restoring";
-  instance.pendingOperation = { id, ...identity, restore };
+  instance.pendingOperation = { ...operation, restore };
 }
 
 function assertRestoreOwnership(

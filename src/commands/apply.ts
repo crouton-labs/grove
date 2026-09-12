@@ -9,9 +9,8 @@ import { computePorts } from "../ports.js";
 import { saveRegistry, withRegistryLock } from "../registry.js";
 import { currentRegisteredTarget, runSequential, selectTargets, type TargetingOptions } from "../selection.js";
 import { loadSettings } from "../settings.js";
-import { describeAppliedCode } from "../setup.js";
+import { applyExistingCheckoutSetup, describeAppliedCode } from "../setup.js";
 import { activePendingOperationError, isPendingInstanceOperationActive } from "../state.js";
-import { startPendingOperationWorker } from "../operation.js";
 import { assertTargetUsable, type GroveTarget, targetSlot } from "../target.js";
 
 interface ApplyOptions extends TargetingOptions {
@@ -36,10 +35,8 @@ export async function applyTarget(target: GroveTarget, options: Pick<ApplyOption
     throw new Error(`${target.projectName} is the project source; grove apply needs a planted instance (for example ${target.projectName}/1)`);
   }
   const operationId = randomUUID();
-  const worker = startPendingOperationWorker();
-  let reserved;
-  try {
-    reserved = await withRegistryLock(async (registry) => {
+  const operation = { id: operationId, pid: process.pid };
+  const reserved = await withRegistryLock(async (registry) => {
     const current = currentRegisteredTarget(registry, target);
     assertTargetUsable(current, "applying");
     const targetInstance = current.instance!;
@@ -66,26 +63,21 @@ export async function applyTarget(target: GroveTarget, options: Pick<ApplyOption
     assertRepositoriesReadyForApply(current.root, sourceConfig?.repos, options.force === true);
 
     targetInstance.pending = "applying";
-    targetInstance.pendingOperation = { id: operationId, ...worker.identity };
+    targetInstance.pendingOperation = operation;
     await saveRegistry(registry);
     return { current, targetInstance, configFile, sourceConfig, settings, context };
-    });
-  } catch (error) {
-    worker.abort();
-    throw error;
-  }
+  });
 
   console.log(`Applying ${reserved.current.projectName}/${reserved.targetInstance.name} (slot ${reserved.targetInstance.slot})`);
-  await worker.run({
-    kind: "apply",
-    source: reserved.current.project.source,
-    target: reserved.current.root,
-    config: reserved.sourceConfig,
-    ports: reserved.current.project.ports,
-    configFile: reserved.configFile,
-    context: reserved.context,
-    settings: reserved.settings,
-  });
+  applyExistingCheckoutSetup(
+    reserved.current.project.source,
+    reserved.current.root,
+    reserved.sourceConfig,
+    reserved.current.project.ports,
+    reserved.configFile,
+    reserved.context,
+    reserved.settings,
+  );
 
   await withRegistryLock(async (registry) => {
     const current = currentRegisteredTarget(registry, target);

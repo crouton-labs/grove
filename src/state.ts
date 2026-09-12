@@ -2,8 +2,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { spawnSync } from "child_process";
-import { GROVE_DIR } from "./registry.js";
-import { isPendingOperationActive } from "./operation.js";
+import { GROVE_DIR, isProcessAlive } from "./registry.js";
 import { GROVE_CONFIG_FILE, loadRepoConfig, resolveStateCommand } from "./config.js";
 import { groveContextEnv, GroveExecutionContext } from "./context.js";
 import { computePorts } from "./ports.js";
@@ -135,7 +134,7 @@ function shellArgument(value: string): string {
 }
 
 export function isPendingInstanceOperationActive(instance: GroveInstance): boolean {
-  return isPendingOperationActive(instance.pendingOperation);
+  return instance.pendingOperation !== undefined && isProcessAlive(instance.pendingOperation.pid);
 }
 
 export function activePendingOperationError(projectName: string, instance: GroveInstance): string {

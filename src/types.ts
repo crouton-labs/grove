@@ -18,8 +18,6 @@ export interface GroveApplied {
 export interface GrovePendingOperation {
   id: string;
   pid: number;
-  processGroup?: number;
-  startedAt?: string;
   restore?: {
     target: string;
     ref: string;
