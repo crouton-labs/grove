@@ -27,6 +27,7 @@ export async function apply(targetRef: string, options: ApplyOptions): Promise<v
 
     const configFile = target.project.configFile ?? GROVE_CONFIG_FILE;
     const sourceConfig = loadRepoConfig(target.project.source, configFile);
+    assertPortContract(target.project.ports, sourceConfig?.ports);
     const settings = loadSettings();
     const context = {
       projectName: target.projectName,
@@ -34,13 +35,14 @@ export async function apply(targetRef: string, options: ApplyOptions): Promise<v
       target: target.root,
       slot: targetSlot(target),
       instanceName: targetInstance.name,
-      ports: computePorts(target.project.ports, targetSlot(target)),
+      ports: computePorts(sourceConfig?.ports ?? target.project.ports, targetSlot(target)),
     };
 
-    // Build the shared environment before any setup phase so malformed secret
-    // files refuse the apply before it rewrites a target.
+    // Build the shared environment and validate every configured repository
+    // before any setup phase can rewrite the target. --force permits dirty
+    // worktrees, not a missing checkout.
     groveContextEnv(context, process.env, settings);
-    if (!options.force) assertNoTrackedChanges(target.root, sourceConfig?.repos);
+    assertRepositoriesReadyForApply(target.root, sourceConfig?.repos, options.force === true);
 
     console.log(`Applying ${target.projectName}/${targetInstance.name} (slot ${targetInstance.slot})`);
     applyExistingCheckoutSetup(
@@ -76,16 +78,50 @@ export async function apply(targetRef: string, options: ApplyOptions): Promise<v
   }
 }
 
-function assertNoTrackedChanges(root: string, repos: Record<string, unknown> | undefined): void {
+function assertPortContract(
+  registeredPorts: Record<string, { base: number; offset: number }>,
+  sourcePorts: Record<string, { base: number; offset: number }> | undefined,
+): void {
+  if (!sourcePorts) return;
+  const registeredNames = Object.keys(registeredPorts).sort();
+  const sourceNames = Object.keys(sourcePorts).sort();
+  const matches = registeredNames.length === sourceNames.length && registeredNames.every((name, index) =>
+    name === sourceNames[index] &&
+    registeredPorts[name].base === sourcePorts[name].base &&
+    registeredPorts[name].offset === sourcePorts[name].offset,
+  );
+  if (!matches) {
+    throw new Error("source config ports differ from the registered port contract; run `grove register --update` for this source before applying");
+  }
+}
+
+function assertRepositoriesReadyForApply(
+  root: string,
+  repos: Record<string, unknown> | undefined,
+  force: boolean,
+): void {
   const repoPaths = repos ? Object.keys(repos).map((repo) => path.join(root, repo)) : [root];
   const dirty: string[] = [];
   for (const repoPath of repoPaths) {
     if (!fs.existsSync(path.join(repoPath, ".git"))) {
       throw new Error(`cannot apply: configured repo is not a git checkout: ${repoPath}`);
     }
+    try {
+      const gitRoot = execFileSync("git", ["rev-parse", "--show-toplevel"], {
+        cwd: repoPath,
+        encoding: "utf-8",
+        stdio: ["ignore", "pipe", "pipe"],
+      }).trim();
+      if (path.resolve(gitRoot) !== fs.realpathSync(repoPath)) {
+        throw new Error("configured repo path is not its git worktree root");
+      }
+    } catch {
+      throw new Error(`cannot apply: configured repo is not a git checkout: ${repoPath}`);
+    }
+    if (force) continue;
     let status: string;
     try {
-      status = execFileSync("git", ["--no-optional-locks", "status", "--porcelain", "--untracked-files=no"], {
+      status = execFileSync("git", ["--no-optional-locks", "status", "--porcelain", "--untracked-files=no", "--ignore-submodules=none"], {
         cwd: repoPath,
         encoding: "utf-8",
         stdio: ["ignore", "pipe", "pipe"],

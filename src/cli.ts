@@ -127,7 +127,7 @@ program
   .command("apply <project/instance>")
   .description("Reapply the source config to an existing instance without cloning or changing state")
   .option("--force", "Apply even when a target repo has tracked changes")
-  .addHelpText("after", "\nApply reruns copyFromSource, secrets, patchPortsIn, substituteIn, install, and setup.sh for an existing instance. It never clones code or applies state. It refuses the project source, planting instances, and tracked changes unless --force; untracked files may be overwritten by copyFromSource.\n")
+  .addHelpText("after", "\nApply reruns copyFromSource, secrets, patchPortsIn, substituteIn, install, and setup.sh for an existing instance. It never clones code or applies state. It refuses the project source, planting instances, a source port contract that differs from the registration (run grove register --update), and configured repositories that are not Git checkouts. It also refuses tracked changes unless --force; --force does not waive the checkout validation. Untracked files may be overwritten by copyFromSource.\n")
   .action(apply);
 
 program

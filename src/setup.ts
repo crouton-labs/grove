@@ -541,15 +541,18 @@ export function applySubstitutions(
   machine: string,
   configFile = GROVE_CONFIG_FILE,
 ): void {
-  const compiled = rules.map((rule) => ({
+  const compiled = rules.map((rule, index) => ({
+    index,
+    find: rule.find,
+    replace: rule.replace,
     globs: rule.in,
     regex: new RegExp(rule.find, "g"),
     // `${slot}` and `${machine}` are not `String.replace` syntax (only
     // `$<name>` is), so they are safe to expand textually before replacement.
     replacement: rule.replace.split("${slot}").join(String(slot)).split("${machine}").join(machine),
   }));
+  const rewrites: Array<{ path: string; relativePath: string; content: string }> = [];
 
-  let patchedCount = 0;
   for (const absPath of walkDir(target)) {
     // Never rewrite grove's own config — it holds the rules themselves, and a
     // pattern broad enough to match its own `find` string would eat them. The
@@ -566,18 +569,35 @@ export function applySubstitutions(
     } catch {
       continue;
     }
-    let patched = content;
-    for (const c of applicable) {
-      patched = patched.replace(c.regex, c.replacement);
+    let substituted = content;
+    for (const rule of applicable) {
+      substituted = substituted.replace(rule.regex, rule.replacement);
     }
-    if (patched !== content) {
-      fs.writeFileSync(absPath, patched, "utf-8");
-      patchedCount++;
-      console.log(`  Rewrote ${rel}`);
+
+    // A substitution phase is valid only when its result is already stable.
+    // Check every selected file before writing any of them, so a bad rule never
+    // leaves earlier files changed when a later one exposes it.
+    let repeated = substituted;
+    let changingRule: typeof applicable[number] | undefined;
+    for (const rule of applicable) {
+      const next = repeated.replace(rule.regex, rule.replacement);
+      if (!changingRule && next !== repeated) changingRule = rule;
+      repeated = next;
     }
+    if (repeated !== substituted) {
+      const rule = changingRule!;
+      throw new Error(
+        `substituteIn[${rule.index}] is not idempotent in ${rel}: ${JSON.stringify(substituted)} becomes ${JSON.stringify(repeated)} on a second pass (find ${JSON.stringify(rule.find)}, replace ${JSON.stringify(rule.replace)})`,
+      );
+    }
+    if (substituted !== content) rewrites.push({ path: absPath, relativePath: rel, content: substituted });
   }
 
-  console.log(`  Substituted in ${patchedCount} file(s)`);
+  for (const rewrite of rewrites) {
+    fs.writeFileSync(rewrite.path, rewrite.content, "utf-8");
+    console.log(`  Rewrote ${rewrite.relativePath}`);
+  }
+  console.log(`  Substituted in ${rewrites.length} file(s)`);
 }
 
 export function applyExistingCheckoutSetup(
