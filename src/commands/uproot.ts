@@ -6,7 +6,7 @@ import { computePorts, checkPort } from "../ports.js";
 import { loadRepoConfig, resolveProjectPath } from "../config.js";
 import { stopInstanceServices } from "../process.js";
 import { regenerateAliases } from "../aliases.js";
-import { groveContextEnv } from "../context.js";
+import { groveContextEnv, type GroveSibling } from "../context.js";
 
 interface UprootOptions {
   force?: boolean;
@@ -61,21 +61,6 @@ export async function uproot(ref: string, options: UprootOptions) {
       const scriptPath = resolveProjectPath(instance.path, teardownScript);
       const fallbackPath = resolveProjectPath(proj.source, teardownScript);
       teardownPath = fs.existsSync(scriptPath) ? scriptPath : fs.existsSync(fallbackPath) ? fallbackPath : null;
-      if (teardownPath) {
-        try {
-          contextEnv = groveContextEnv({
-            projectName: project,
-            source: proj.source,
-            target: instance.path,
-            slot: instance.slot,
-            instanceName,
-            ports,
-          });
-        } catch (error) {
-          console.error(`Error: ${(error as Error).message}`);
-          process.exit(1);
-        }
-      }
     }
   }
 
@@ -99,49 +84,62 @@ export async function uproot(ref: string, options: UprootOptions) {
     }
   }
 
-  // --- Phase 1: Stop services ---
-  console.log("\nStopping services...");
-  const { killed, portsFreed } = await stopInstanceServices(instance.path, ports);
-
-  if (killed > 0) {
-    console.log(`  Killed ${killed} process${killed > 1 ? "es" : ""}.`);
-  } else {
-    console.log("  No running services found.");
-  }
-
-  if (!portsFreed) {
-    console.log("\n\x1b[33m⚠\x1b[0m Some ports could not be freed. Continuing with teardown.");
-  }
-
-  // --- Phase 2: Run teardown script if configured ---
-  if (teardownPath && teardownScript && contextEnv) {
-    console.log(`\nRunning teardown script: ${teardownScript}`);
-    try {
-      execSync(`bash "${teardownPath}"`, {
-        stdio: "inherit",
-        cwd: instance.path,
-        env: contextEnv,
-      });
-    } catch {
-      console.error("  Warning: teardown script failed.");
-    }
-  }
-
-  // --- Phase 3: Remove directory ---
-  if (exists) {
-    console.log(`\nRemoving ${instance.path}...`);
-    fs.rmSync(instance.path, { recursive: true, force: true });
-  }
-
-  // --- Phase 4: Update registry ---
+  // Keep the lock through teardown so a replacement cannot claim this slot's resources.
   try {
     await withRegistryLock(async (currentRegistry) => {
       const currentProject = currentRegistry.projects[project];
-      const currentIndex = currentProject?.instances.findIndex((candidate) => candidate.name === instanceName) ?? -1;
+      const currentIndex = currentProject?.instances.findIndex((candidate) =>
+        candidate.name === instanceName &&
+        candidate.slot === instance.slot &&
+        candidate.path === instance.path &&
+        candidate.created === instance.created,
+      ) ?? -1;
       if (!currentProject || currentIndex === -1) {
         throw new Error(`${project}/${instanceName} is no longer registered`);
       }
       currentProject.instances.splice(currentIndex, 1);
+      if (teardownPath) {
+        const siblings: GroveSibling[] = [
+          { name: project, slot: 0, path: currentProject.source },
+          ...currentProject.instances.map(({ name, slot, path }) => ({ name, slot, path })),
+        ].sort((a, b) => a.slot - b.slot || a.name.localeCompare(b.name) || a.path.localeCompare(b.path));
+        contextEnv = groveContextEnv({
+          projectName: project,
+          source: proj.source,
+          target: instance.path,
+          slot: instance.slot,
+          instanceName,
+          ports,
+        }, process.env, undefined, siblings);
+      }
+      console.log("\nStopping services...");
+      const { killed, portsFreed } = await stopInstanceServices(instance.path, ports);
+      if (killed > 0) {
+        console.log(`  Killed ${killed} process${killed > 1 ? "es" : ""}.`);
+      } else {
+        console.log("  No running services found.");
+      }
+      if (!portsFreed) {
+        console.log("\n\x1b[33m⚠\x1b[0m Some ports could not be freed. Continuing with teardown.");
+      }
+
+      if (teardownPath && teardownScript && contextEnv) {
+        console.log(`\nRunning teardown script: ${teardownScript}`);
+        try {
+          execSync(`bash "${teardownPath}"`, {
+            stdio: "inherit",
+            cwd: instance.path,
+            env: contextEnv,
+          });
+        } catch {
+          console.error("  Warning: teardown script failed.");
+        }
+      }
+
+      if (exists) {
+        console.log(`\nRemoving ${instance.path}...`);
+        fs.rmSync(instance.path, { recursive: true, force: true });
+      }
       await saveRegistry(currentRegistry);
       regenerateAliases(currentRegistry);
     });
