@@ -48,6 +48,7 @@ export async function release(targetRef: string, options: ReleaseOptions): Promi
         instance.spec.labels = { "grove.pool": "ready" };
       },
     });
+    console.log(`Released: ${targetName(reservation.target)}`);
   } catch (error) {
     console.error(`Error: ${(error as Error).message}`);
     process.exitCode = 1;

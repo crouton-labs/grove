@@ -42,7 +42,11 @@ function poolStatus(projectName: string) {
   const project = registry.projects[projectName];
   if (!project) throw new Error(`project "${projectName}" not registered`);
   const ready = project.instances
-    .filter((instance) => instance.spec.labels["grove.pool"] === "ready" && (instance.pending === undefined || instance.pending === "planting"))
+    .filter((instance) =>
+      instance.spec.labels["grove.pool"] === "ready" &&
+      // An in-flight plant carries needsState until it completes, so it counts; a settled
+      // instance that never got its state does not, because claim refuses it.
+      (instance.pending === "planting" || (instance.pending === undefined && !instance.needsState)))
     .sort((a, b) => a.slot - b.slot || a.name.localeCompare(b.name));
   return { project, ready };
 }

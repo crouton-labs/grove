@@ -110,7 +110,7 @@ For `restore`, use `grove restore <target> <ref>` for one target and `grove rest
 
 ## Warm pool
 
-`grove pool <project>` shows the number of ready instances, their slots, and the number of claimed instances. `grove pool <project> --size N` plants with configured code and baseline state until N completed instances carry `grove.pool=ready`. It only grows; a pool already at or above the requested size is left unchanged.
+`grove pool <project>` shows the number of ready instances, their slots, and the number of claimed instances. `grove pool <project> --size N` plants with configured code and baseline state until N completed instances carry `grove.pool=ready`. It only grows; a pool already at or above the requested size is left unchanged. An in-progress plant counts toward the size, so concurrent `grove pool` runs do not overshoot; an interrupted plant keeps counting until you remove it with `grove uproot <project/name> --force`.
 
 `grove claim <project> [--label key=value...]` atomically takes the lowest-slot ready instance, removes `grove.pool=ready`, and adds the supplied labels. It prints the same `--- grove-output ---` JSON block as `grove plant`. When no ready instance exists, grow the pool with `grove pool <project> --size N`.
 
