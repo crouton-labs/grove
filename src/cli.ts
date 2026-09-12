@@ -137,7 +137,7 @@ program
   .option("-l, --selector <key=value[,key=value]>", "Select instances whose labels all match")
   .option("--all", "Select every planted instance")
   .option("--force", "Apply even when a target repo has tracked changes")
-  .addHelpText("after", `\n${TARGETING_HELP}\n\nApply reruns copyFromSource, secrets, patchPortsIn, substituteIn, install, and setup.sh for an existing instance. It never clones code or applies state. It refuses the project source, planting instances, a source port contract that differs from the registration (run grove register --update), and configured repositories that are not Git checkouts. It also refuses tracked changes unless --force; --force does not waive the checkout validation. Untracked files may be overwritten by copyFromSource.\n`)
+  .addHelpText("after", `\n${TARGETING_HELP}\n\nApply reruns copyFromSource, secrets, patchPortsIn, substituteIn, install, and setup.sh for an existing instance. It never clones code or applies state. It refuses the project source, or an instance being planted, uprooted, or restored. If setup is interrupted, re-run apply to complete it. It also refuses a source port contract that differs from the registration (run grove register --update), configured repositories that are not Git checkouts, and tracked changes unless --force; --force does not waive checkout validation. Untracked files may be overwritten by copyFromSource.\n`)
   .action(apply);
 
 program
@@ -153,7 +153,7 @@ program
   .option("--all", "Select every planted instance")
   .option("--force", "Skip confirmation prompt")
   .option("--ignore-fingerprint", "Restore even when the captured schema differs")
-  .addHelpText("after", `\n${TARGETING_HELP}\n\nFor one target: \`grove restore <target> <ref>\`. With -l or --all: \`grove restore [project] <ref> -l ...\`; omit [project] when it can be resolved from the current directory or is the only registered project.\n\n${REF_GRAMMAR}\n`)
+  .addHelpText("after", `\n${TARGETING_HELP}\n\nFor one target: \`grove restore <target> <ref>\`. With -l or --all: \`grove restore [project] <ref> -l ...\`; omit [project] when it can be resolved from the current directory or is the only registered project. Restore refuses an instance being planted, uprooted, or applied. If restore is interrupted, re-run restore with the intended ref to complete it.\n\n${REF_GRAMMAR}\n`)
   .action(restore);
 
 program
@@ -173,7 +173,7 @@ program
 
 program
   .command("list [project]")
-  .description("List instances, including labels, planting state, git state, and port health")
+  .description("List instances, including labels, operation state, git state, and port health")
   .option("--json", "Print machine-readable inventory, including each instance spec.labels")
   .action((project: string | undefined, options: { json?: boolean }) => list(project, options));
 
@@ -220,7 +220,7 @@ program
 
 program
   .command("doctor [project]")
-  .description("Validate registry, secret env files, report planting instances, and prune zombies")
+  .description("Validate registry, secret env files, report in-progress instances, and prune zombies")
   .addHelpText("after", `\n${SECRET_ENV_HELP}\n`)
   .action(doctor);
 

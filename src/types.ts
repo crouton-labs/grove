@@ -15,6 +15,18 @@ export interface GroveApplied {
   code: Record<string, { branch: string | null; commit: string }> | null;
 }
 
+export interface GrovePendingOperation {
+  id: string;
+  pid: number;
+  processGroup?: number;
+  startedAt?: string;
+  restore?: {
+    target: string;
+    ref: string;
+    source?: string;
+  };
+}
+
 export interface GroveInstance {
   name: string;
   path: string;
@@ -26,9 +38,11 @@ export interface GroveInstance {
    */
   needsState?: string;
   /** Present while an operation has reserved this instance's slot. */
-  pending?: "planting" | "uprooting";
+  pending?: "planting" | "uprooting" | "applying" | "restoring";
   /** Identifies the specific plant attempt that owns a pending reservation. */
   reservationId?: string;
+  /** Identifies the process and restore request that own an apply or restore reservation. */
+  pendingOperation?: GrovePendingOperation;
   spec: GroveInstanceSpec;
   applied: GroveApplied | null;
 }

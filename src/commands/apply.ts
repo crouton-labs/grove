@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { execFileSync } from "child_process";
+import { randomUUID } from "crypto";
 import { GROVE_CONFIG_FILE, loadRepoConfig } from "../config.js";
 import { groveContextEnv } from "../context.js";
 import { configHash } from "../intent.js";
@@ -8,7 +9,9 @@ import { computePorts } from "../ports.js";
 import { saveRegistry, withRegistryLock } from "../registry.js";
 import { currentRegisteredTarget, runSequential, selectTargets, type TargetingOptions } from "../selection.js";
 import { loadSettings } from "../settings.js";
-import { applyExistingCheckoutSetup, describeAppliedCode } from "../setup.js";
+import { describeAppliedCode } from "../setup.js";
+import { activePendingOperationError, isPendingInstanceOperationActive } from "../state.js";
+import { startPendingOperationWorker } from "../operation.js";
 import { assertTargetUsable, type GroveTarget, targetSlot } from "../target.js";
 
 interface ApplyOptions extends TargetingOptions {
@@ -32,11 +35,17 @@ export async function applyTarget(target: GroveTarget, options: Pick<ApplyOption
   if (!target.instance) {
     throw new Error(`${target.projectName} is the project source; grove apply needs a planted instance (for example ${target.projectName}/1)`);
   }
-  // Keep uproot from replacing this slot while setup writes the checkout.
-  return withRegistryLock(async (registry) => {
+  const operationId = randomUUID();
+  const worker = startPendingOperationWorker();
+  let reserved;
+  try {
+    reserved = await withRegistryLock(async (registry) => {
     const current = currentRegisteredTarget(registry, target);
-    assertTargetUsable(current);
+    assertTargetUsable(current, "applying");
     const targetInstance = current.instance!;
+    if (targetInstance.pending === "applying" && isPendingInstanceOperationActive(targetInstance)) {
+      throw new Error(activePendingOperationError(current.projectName, targetInstance));
+    }
     const configFile = current.project.configFile ?? GROVE_CONFIG_FILE;
     const sourceConfig = loadRepoConfig(current.project.source, configFile);
     assertPortContract(current.project.ports, sourceConfig?.ports);
@@ -56,27 +65,46 @@ export async function applyTarget(target: GroveTarget, options: Pick<ApplyOption
     groveContextEnv(context, process.env, settings);
     assertRepositoriesReadyForApply(current.root, sourceConfig?.repos, options.force === true);
 
-    console.log(`Applying ${current.projectName}/${targetInstance.name} (slot ${targetInstance.slot})`);
-    applyExistingCheckoutSetup(
-      current.project.source,
-      current.root,
-      sourceConfig,
-      current.project.ports,
-      configFile,
-      context,
-      settings,
-    );
-
-    targetInstance.applied = {
-      configHash: configHash(sourceConfig),
-      at: new Date().toISOString(),
-      code: describeAppliedCode(current.root, sourceConfig?.repos),
-    };
+    targetInstance.pending = "applying";
+    targetInstance.pendingOperation = { id: operationId, ...worker.identity };
     await saveRegistry(registry);
+    return { current, targetInstance, configFile, sourceConfig, settings, context };
+    });
+  } catch (error) {
+    worker.abort();
+    throw error;
+  }
 
-    console.log(`Applied: ${current.projectName}/${targetInstance.name}`);
-    return 0;
+  console.log(`Applying ${reserved.current.projectName}/${reserved.targetInstance.name} (slot ${reserved.targetInstance.slot})`);
+  await worker.run({
+    kind: "apply",
+    source: reserved.current.project.source,
+    target: reserved.current.root,
+    config: reserved.sourceConfig,
+    ports: reserved.current.project.ports,
+    configFile: reserved.configFile,
+    context: reserved.context,
+    settings: reserved.settings,
   });
+
+  await withRegistryLock(async (registry) => {
+    const current = currentRegisteredTarget(registry, target);
+    const targetInstance = current.instance!;
+    if (targetInstance.pending !== "applying" || targetInstance.pendingOperation?.id !== operationId) {
+      throw new Error(`${current.projectName}/${targetInstance.name} is no longer being applied by this command`);
+    }
+    targetInstance.applied = {
+      configHash: configHash(reserved.sourceConfig),
+      at: new Date().toISOString(),
+      code: describeAppliedCode(current.root, reserved.sourceConfig?.repos),
+    };
+    delete targetInstance.pending;
+    delete targetInstance.pendingOperation;
+    await saveRegistry(registry);
+  });
+
+  console.log(`Applied: ${reserved.current.projectName}/${reserved.targetInstance.name}`);
+  return 0;
 }
 
 function assertPortContract(

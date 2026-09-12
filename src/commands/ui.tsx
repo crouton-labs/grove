@@ -12,6 +12,7 @@ import {
 import { captureChild, planLifecycle, runLifecycleCaptured, type LifecycleRun } from "../lifecycle.js";
 import { loadRegistry } from "../registry.js";
 import { loadSettings } from "../settings.js";
+import { pendingResolution } from "../state.js";
 import { resolveTargetFromCwd, type GroveTarget } from "../target.js";
 import { killSessionOnStop, switchToSession } from "../tmux.js";
 
@@ -308,22 +309,31 @@ function App({ projectName }: { projectName: string }) {
    * Resolve the role against the config on disk, refuse if it is undeclared, confirm when asked,
    * then run. Resolution comes before the confirmation so an undeclared role never prompts, and it
    * reads the config rather than the gathered row so a stale row can never skip the prompt.
+   *
+   * The plan built before the prompt only decides whether to prompt: the registry and the project's
+   * config can both change while the confirmation waits for a reply, so the run resolves the target
+   * and plans the role again and executes that fresh plan.
    */
   const runRole = useCallback(
     (role: LifecycleRole, confirmPrompt?: string) => {
       if (!target || !row) return setMessage(`slot ${row?.slot} has no instance — press p to plant one.`);
-      let plan;
-      let groveTarget: GroveTarget;
       try {
-        groveTarget = toGroveTarget(projectName, row, target);
-        plan = planLifecycle(groveTarget, role);
+        planLifecycle(toGroveTarget(projectName, row, target), role);
       } catch (planError) {
         return setMessage((planError as Error).message);
       }
       const settings = role === "stop" ? safeSettings(setMessage) : null;
       if (role === "stop" && !settings) return;
-      const captured: string[] = [];
-      const run = () =>
+      const run = () => {
+        let groveTarget: GroveTarget;
+        let plan;
+        try {
+          groveTarget = toGroveTarget(projectName, row, target);
+          plan = planLifecycle(groveTarget, role);
+        } catch (planError) {
+          return setMessage((planError as Error).message);
+        }
+        const captured: string[] = [];
         startAction(
           `${role} ${targetRef}`,
           [plan.command, ...plan.argv].join(" "),
@@ -344,6 +354,7 @@ function App({ projectName }: { projectName: string }) {
             }
           },
         );
+      };
       if (confirmPrompt) return setConfirmation({ prompt: confirmPrompt, run });
       run();
     },
@@ -459,7 +470,7 @@ function App({ projectName }: { projectName: string }) {
 
   const width = stdout?.columns ?? 100;
   const declares = (role: LifecycleRole) => Boolean(target?.lifecycle.includes(role));
-  const statusBudget = statusRowBudget(terminalRows, rows.length + (hidden > 0 ? 1 : 0));
+  const statusBudget = statusRowBudget(terminalRows, rows.length + (hidden > 0 ? 1 : 0), target?.pending ? 1 : 0);
 
   return (
     <Box flexDirection="column" width={width}>
@@ -590,6 +601,13 @@ function DetailPane({
         <Text>{`  ${target.path}  `}</Text>
         <Text dimColor>{`session ${target.tmuxSession}`}</Text>
       </Text>
+      {target.pending ? (
+        <Text wrap="truncate-end">
+          <Text dimColor>pending </Text>
+          <Text color="yellow">{target.pending}</Text>
+          <Text>{` — ${pendingResolution(project.name, target)}`}</Text>
+        </Text>
+      ) : null}
       <Text wrap="truncate-end">
         <Text dimColor>repos   </Text>
         {target.repos.length ? target.repos.map(formatGitState).join(" · ") : "(no repos declared)"}
@@ -610,9 +628,11 @@ function DetailPane({
  * How many terminal rows the status region may occupy. Everything else on screen is one row each:
  * the title, the column header, every table row (each slot, plus the dropped-rows notice when there
  * is one), two dividers, the message line, the footer, and the detail pane's target and repos lines.
+ * `pendingRows` is 1 when the detail pane also shows a pending instance's state and the command that
+ * resolves it, which is a row the status region must not spend.
  */
-function statusRowBudget(terminalRows: number, tableRows: number): number {
-  return Math.max(0, terminalRows - (tableRows + 8));
+function statusRowBudget(terminalRows: number, tableRows: number, pendingRows: number): number {
+  return Math.max(0, terminalRows - (tableRows + pendingRows + 8));
 }
 
 const statusNotice = (hidden: number) => `… ${hidden} more ${hidden === 1 ? "line" : "lines"} not shown`;

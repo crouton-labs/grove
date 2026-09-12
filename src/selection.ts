@@ -90,20 +90,21 @@ export function selectTargets(
 /** Run targets in order, stop after the first failure, and print their final state. */
 /** Find the same registered instance after a fan-out wait or before a mutation. */
 export function currentRegisteredTarget(registry: GroveRegistry, target: GroveTarget): GroveTarget {
-  if (!target.instance) return target;
   const project = registry.projects[target.projectName];
+  if (!project) throw new Error(`${targetName(target)} is no longer registered`);
+  if (!target.instance) return { project, projectName: target.projectName, root: project.source };
   const instance = project?.instances.find((candidate) =>
     candidate.name === target.instance!.name &&
     candidate.slot === target.instance!.slot &&
     candidate.path === target.instance!.path &&
     candidate.created === target.instance!.created,
   );
-  if (!project || !instance) throw new Error(`${targetName(target)} is no longer registered`);
+  if (!instance) throw new Error(`${targetName(target)} is no longer registered`);
   return { project, projectName: target.projectName, root: instance.path, instance };
 }
 
 export async function runSequential(
-  targets: readonly GroveTarget[], 
+  targets: readonly GroveTarget[],
   action: (target: GroveTarget) => number | Promise<number>,
 ): Promise<number> {
   const results: SequentialTargetResult[] = [];

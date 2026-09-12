@@ -3,10 +3,11 @@ import os from "os";
 import path from "path";
 import { spawnSync } from "child_process";
 import { GROVE_DIR } from "./registry.js";
+import { isPendingOperationActive } from "./operation.js";
 import { GROVE_CONFIG_FILE, loadRepoConfig, resolveStateCommand } from "./config.js";
 import { groveContextEnv, GroveExecutionContext } from "./context.js";
 import { computePorts } from "./ports.js";
-import type { GroveInstance, GroveProjectConfig } from "./types.js";
+import type { GroveInstance, GrovePendingOperation, GroveProjectConfig } from "./types.js";
 
 export const STATES_DIR = path.join(GROVE_DIR, "states");
 export const BASELINE_REF = "baseline";
@@ -98,10 +99,55 @@ export function pendingError(projectName: string, instance: GroveInstance): stri
       `Re-run grove uproot ${projectName}/${instance.name} if teardown was interrupted`
     );
   }
+  if (instance.pending === "applying") {
+    return (
+      `${projectName}/${instance.name} is being applied and cannot be used. ` +
+      `Re-run grove apply ${projectName}/${instance.name} if setup was interrupted`
+    );
+  }
+  if (instance.pending === "restoring") {
+    return (
+      `${projectName}/${instance.name} state is being restored and cannot be used. ` +
+      `Re-run grove restore ${projectName}/${instance.name} <ref> if restore was interrupted`
+    );
+  }
   return (
     `${projectName}/${instance.name} is still planting and cannot be used. ` +
     `Remove it with: grove uproot ${projectName}/${instance.name}`
   );
+}
+
+export function pendingResolution(projectName: string, instance: {
+  name: string;
+  pending?: GroveInstance["pending"] | null;
+  pendingOperation?: GroveInstance["pendingOperation"] | null;
+}): string {
+  const target = `${projectName}/${instance.pendingOperation?.restore?.target ?? instance.name}`;
+  if (instance.pending === "planting") return `Remove with: grove uproot ${shellArgument(target)}`;
+  if (instance.pending === "uprooting") return `Re-run with: grove uproot ${shellArgument(target)}`;
+  if (instance.pending === "applying") return `Re-run with: grove apply ${shellArgument(target)}`;
+  const restore = instance.pendingOperation?.restore;
+  return `Re-run with: grove restore ${shellArgument(target)} ${shellArgument(restore?.ref ?? "<ref>")}`;
+}
+
+function shellArgument(value: string): string {
+  return /^[A-Za-z0-9_@%+=:,./-]+$/.test(value) ? value : `'${value.replaceAll("'", "'\\''")}'`;
+}
+
+export function isPendingInstanceOperationActive(instance: GroveInstance): boolean {
+  return isPendingOperationActive(instance.pendingOperation);
+}
+
+export function activePendingOperationError(projectName: string, instance: GroveInstance): string {
+  return `${projectName}/${instance.name} already has an active ${instance.pending} operation`;
+}
+
+export function sameRestoreOperation(
+  operation: GrovePendingOperation | undefined,
+  restore: NonNullable<GrovePendingOperation["restore"]>,
+): boolean {
+  const existing = operation?.restore;
+  return existing?.target === restore.target && existing.ref === restore.ref && existing.source === restore.source;
 }
 
 /** Context for a registered instance, by name. Throws with the instance list when unknown. */
@@ -361,6 +407,7 @@ export function resolveRef(
   projectName: string,
   project: GroveProjectConfig,
   ref: string,
+  allowRestoring = false,
 ): StateRef {
   if (ref === BASELINE_REF) return { kind: "baseline" };
 
@@ -371,7 +418,9 @@ export function resolveRef(
       return { kind: "live", label: "@source", context: sourceContext(project, projectName) };
     }
     const instance = findInstance(project, projectName, target);
-    if (instance.pending) throw new Error(pendingError(projectName, instance));
+    if (instance.pending && !(allowRestoring && instance.pending === "restoring")) {
+      throw new Error(pendingError(projectName, instance));
+    }
     return {
       kind: "live",
       label: `@${target}`,

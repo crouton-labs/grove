@@ -76,8 +76,8 @@ export function resolveTargetFromRef(ref: string): GroveTarget {
   return { project, projectName, root: path.resolve(instance.path), instance };
 }
 
-export function assertTargetUsable(target: GroveTarget): void {
-  if (target.instance?.pending) {
+export function assertTargetUsable(target: GroveTarget, allowedPending?: GroveInstance["pending"]): void {
+  if (target.instance?.pending && target.instance.pending !== allowedPending) {
     throw new Error(pendingError(target.projectName, target.instance));
   }
   if (target.instance?.needsState) {

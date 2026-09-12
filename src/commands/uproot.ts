@@ -8,6 +8,7 @@ import { stopInstanceServices } from "../process.js";
 import { regenerateAliases } from "../aliases.js";
 import { groveContextEnv, type GroveSibling } from "../context.js";
 import { runSequential, selectTargets, type TargetingOptions } from "../selection.js";
+import { pendingError } from "../state.js";
 import type { GroveTarget } from "../target.js";
 
 interface UprootOptions extends TargetingOptions {
@@ -34,6 +35,9 @@ export async function uprootTarget(target: GroveTarget, options: Pick<UprootOpti
     throw new Error(`${target.projectName} is the project source; grove uproot needs a planted instance`);
   }
   const { project: proj, projectName: project, instance } = target;
+  if (instance.pending === "applying" || instance.pending === "restoring") {
+    throw new Error(pendingError(project, instance));
+  }
   const instanceName = instance.name;
   const exists = fs.existsSync(instance.path);
 
@@ -86,6 +90,9 @@ export async function uprootTarget(target: GroveTarget, options: Pick<UprootOpti
       throw new Error(`${project}/${instanceName} is no longer registered`);
     }
     const currentInstance = currentProject.instances[currentIndex];
+    if (currentInstance.pending === "applying" || currentInstance.pending === "restoring") {
+      throw new Error(pendingError(project, currentInstance));
+    }
     currentInstance.pending = "uprooting";
     delete currentInstance.reservationId;
     await saveRegistry(currentRegistry);

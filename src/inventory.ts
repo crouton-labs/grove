@@ -7,7 +7,7 @@ import { computePorts, checkPort, maxSlot } from "./ports.js";
 import { loadRegistry } from "./registry.js";
 import { targetSlot, type GroveTarget } from "./target.js";
 import { tmuxSessionName } from "./tmux.js";
-import type { GroveApplied, GroveInstanceSpec } from "./types.js";
+import type { GroveApplied, GroveInstanceSpec, GrovePendingOperation } from "./types.js";
 
 export interface InventoryPort {
   name: string;
@@ -32,7 +32,8 @@ export interface InventoryTarget {
   exists: boolean;
   created: string | null;
   needsState: string | null;
-  pending: "planting" | "uprooting" | null;
+  pending: "planting" | "uprooting" | "applying" | "restoring" | null;
+  pendingOperation: GrovePendingOperation | null;
   spec: GroveInstanceSpec | null;
   applied: GroveApplied | null;
   configStale: boolean;
@@ -119,6 +120,7 @@ async function gatherTarget(
     created: target.instance?.created ?? null,
     needsState: target.instance?.needsState ?? null,
     pending: target.instance?.pending ?? null,
+    pendingOperation: target.instance?.pendingOperation ?? null,
     spec: instance?.spec ?? null,
     applied,
     configStale: applied !== null && sourceConfigHash !== null && applied.configHash !== sourceConfigHash,

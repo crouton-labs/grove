@@ -11,7 +11,7 @@ import {
 import { loadSettings } from "../settings.js";
 import { configHash } from "../intent.js";
 import { inspectScopedEnv } from "../env.js";
-import { instanceContext, sourceContext } from "../state.js";
+import { instanceContext, pendingResolution, sourceContext } from "../state.js";
 import type { GroveExecutionContext } from "../context.js";
 import type { GroveProjectConfig } from "../types.js";
 
@@ -58,9 +58,8 @@ export async function doctor(project?: string) {
       if (!reportEnvFiles(instanceContext(proj, name, inst.name), inst.name)) failures++;
       const exists = fs.existsSync(inst.path);
       if (inst.pending) {
-        const action = inst.pending === "uprooting" ? "Re-run" : "Remove";
         console.log(`  \x1b[33m⚠\x1b[0m ${inst.name} → ${inst.path} (${inst.pending}${exists ? "" : "; directory missing"})`);
-        console.log(`    ${action} with: grove uproot ${name}/${inst.name}`);
+        console.log(`    ${pendingResolution(name, inst)}`);
         failures++;
         continue;
       }
