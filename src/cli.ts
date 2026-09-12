@@ -21,6 +21,7 @@ import { start } from "./commands/start.js";
 import { stop } from "./commands/stop.js";
 import { status } from "./commands/status.js";
 import { reset } from "./commands/reset.js";
+import { label } from "./commands/label.js";
 import { ui } from "./commands/ui.js";
 import { noticeIfUpdateAvailable } from "./update-notice.js";
 import { SECRET_ENV_HELP } from "./env.js";
@@ -112,6 +113,12 @@ const SLOT_CAP_GRAMMAR = `Slots are positive safe integers numbered from 1. Grov
 
 Plant reserves its registry entry as \`planting\` before copying files. An interrupted plant remains visible and can only be removed with \`grove uproot <project/name>\`.`;
 
+const TARGETING_HELP = `Target one instance with \`<target>\`, select instances whose labels all match with \`-l key=value[,key=value] [project]\`, or select every planted instance with \`--all [project]\`. Selectors and \`--all\` never match the project source (slot 0). A multi-target command runs sequentially in slot order, stops after the first non-zero exit, and prints a summary including targets that never started.`;
+
+function collectString(value: string, previous: string[]): string[] {
+  return [...previous, value];
+}
+
 program
   .command("plant <project> [name]")
   .description("Reserve a slot, then create a new project instance")
@@ -120,14 +127,17 @@ program
   .option("--code-from <mode>", "Code to start from: configured | @source (default: configured)")
   .option("--from <ref>", "State to start from (default: baseline)")
   .option("--ignore-fingerprint", "Restore even when the captured schema differs")
+  .option("--label <key=value>", "Instance label; repeatable (key: [a-z0-9._-]+)", collectString, [])
   .addHelpText("after", `\n${CODE_GRAMMAR}\n\n${REF_GRAMMAR}\n\n${SLOT_CAP_GRAMMAR}\n`)
   .action(plant);
 
 program
-  .command("apply <project/instance>")
-  .description("Reapply the source config to an existing instance without cloning or changing state")
+  .command("apply [target-or-project]")
+  .description("Reapply the source config to one target or a selected instance set")
+  .option("-l, --selector <key=value[,key=value]>", "Select instances whose labels all match")
+  .option("--all", "Select every planted instance")
   .option("--force", "Apply even when a target repo has tracked changes")
-  .addHelpText("after", "\nApply reruns copyFromSource, secrets, patchPortsIn, substituteIn, install, and setup.sh for an existing instance. It never clones code or applies state. It refuses the project source, planting instances, a source port contract that differs from the registration (run grove register --update), and configured repositories that are not Git checkouts. It also refuses tracked changes unless --force; --force does not waive the checkout validation. Untracked files may be overwritten by copyFromSource.\n")
+  .addHelpText("after", `\n${TARGETING_HELP}\n\nApply reruns copyFromSource, secrets, patchPortsIn, substituteIn, install, and setup.sh for an existing instance. It never clones code or applies state. It refuses the project source, planting instances, a source port contract that differs from the registration (run grove register --update), and configured repositories that are not Git checkouts. It also refuses tracked changes unless --force; --force does not waive the checkout validation. Untracked files may be overwritten by copyFromSource.\n`)
   .action(apply);
 
 program
@@ -137,11 +147,13 @@ program
   .action(snapshot);
 
 program
-  .command("restore <project/instance> <ref>")
-  .description("Load a state ref into an existing instance, replacing its current state")
+  .command("restore [target-or-project] [ref]")
+  .description("Load a state ref into one target or a selected instance set")
+  .option("-l, --selector <key=value[,key=value]>", "Select instances whose labels all match")
+  .option("--all", "Select every planted instance")
   .option("--force", "Skip confirmation prompt")
   .option("--ignore-fingerprint", "Restore even when the captured schema differs")
-  .addHelpText("after", `\n${REF_GRAMMAR}\n`)
+  .addHelpText("after", `\n${TARGETING_HELP}\n\nFor one target: \`grove restore <target> <ref>\`. With -l or --all: \`grove restore [project] <ref> -l ...\`; omit [project] when it can be resolved from the current directory or is the only registered project.\n\n${REF_GRAMMAR}\n`)
   .action(restore);
 
 program
@@ -151,16 +163,18 @@ program
   .action(states);
 
 program
-  .command("uproot <project/name>")
-  .description("Tear down an instance, including a partial planting, and remove it from registry")
-  .option("--force", "Skip confirmation prompt")
-  .addHelpText("after", "\nThe configured teardown script alone receives GROVE_SIBLINGS_JSON: the slot-sorted JSON inventory remaining after this instance is gone, including the source at slot 0. No other dispatched command receives it.\n")
+  .command("uproot [target-or-project]")
+  .description("Tear down one target or a selected instance set and remove it from registry")
+  .option("-l, --selector <key=value[,key=value]>", "Select instances whose labels all match")
+  .option("--all", "Select every planted instance")
+  .option("--force", "Skip confirmation prompt; required with -l or --all")
+  .addHelpText("after", `\n${TARGETING_HELP}\n\nUproot with -l or --all requires --force. The configured teardown script alone receives GROVE_SIBLINGS_JSON: the slot-sorted JSON inventory remaining after this instance is gone, including the source at slot 0. No other dispatched command receives it.\n`)
   .action(uproot);
 
 program
   .command("list [project]")
-  .description("List instances, including planting state, git state, and port health")
-  .option("--json", "Print machine-readable inventory")
+  .description("List instances, including labels, planting state, git state, and port health")
+  .option("--json", "Print machine-readable inventory, including each instance spec.labels")
   .action((project: string | undefined, options: { json?: boolean }) => list(project, options));
 
 program
@@ -169,10 +183,29 @@ program
   .option("--json", "Print target identity and path as JSON")
   .action(open);
 
-program.command("start <target>").description("Run a target's lifecycle start command").action(start);
-program.command("stop <target>").description("Run a target's lifecycle stop command").action(stop);
-program.command("status <target>").description("Run a target's lifecycle status command").action(status);
-program.command("reset <target>").description("Run a target's lifecycle reset command").action(reset);
+for (const [name, description, action] of [
+  ["start", "Run a target's lifecycle start command", start],
+  ["stop", "Run a target's lifecycle stop command", stop],
+  ["status", "Run a target's lifecycle status command", status],
+  ["reset", "Run a target's lifecycle reset command", reset],
+] as const) {
+  program
+    .command(`${name} [target-or-project]`)
+    .description(`${description} for one target or a selected instance set`)
+    .option("-l, --selector <key=value[,key=value]>", "Select instances whose labels all match")
+    .option("--all", "Select every planted instance")
+    .addHelpText("after", `\n${TARGETING_HELP}\n`)
+    .action(action);
+}
+
+program
+  .command("label [target-or-project] [key=value...]")
+  .description("Add or remove labels on one target or a selected instance set")
+  .option("-l, --selector <key=value[,key=value]>", "Select instances whose labels all match")
+  .option("--all", "Select every planted instance")
+  .option("--rm <key>", "Remove a label key; repeatable", collectString, [])
+  .addHelpText("after", `\n${TARGETING_HELP}\n\nFor one target: \`grove label <target> key=value ... [--rm key]\`. With -l or --all: \`grove label [project] key=value ... -l ...\`; omit [project] when it can be resolved from the current directory or is the only registered project. Label keys must match [a-z0-9._-]+.\n`)
+  .action(label);
 
 program
   .command("adopt <project> <name> <path>")

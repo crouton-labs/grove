@@ -1,49 +1,40 @@
 import fs from "fs";
 import { execSync } from "child_process";
-import { loadRegistry, saveRegistry, withRegistryLock } from "../registry.js";
+import { saveRegistry, withRegistryLock } from "../registry.js";
 import { confirm } from "../prompt.js";
 import { computePorts, checkPort } from "../ports.js";
 import { loadRepoConfig, resolveProjectPath } from "../config.js";
 import { stopInstanceServices } from "../process.js";
 import { regenerateAliases } from "../aliases.js";
 import { groveContextEnv, type GroveSibling } from "../context.js";
+import { runSequential, selectTargets, type TargetingOptions } from "../selection.js";
+import type { GroveTarget } from "../target.js";
 
-interface UprootOptions {
+interface UprootOptions extends TargetingOptions {
   force?: boolean;
 }
 
-export async function uproot(ref: string, options: UprootOptions) {
-  const parts = ref.split("/");
-  if (parts.length !== 2 || !parts[0] || !parts[1]) {
-    console.error(
-      'Error: specify instance as project/name (e.g. "grove uproot northlight/my-env")',
-    );
-    process.exit(1);
-  }
-  const [project, instanceName] = parts;
-
-  const registry = loadRegistry();
-  const proj = registry.projects[project];
-  if (!proj) {
-    console.error(`Error: project "${project}" not registered.`);
-    process.exit(1);
-  }
-
-  const idx = proj.instances.findIndex((i) => i.name === instanceName);
-  if (idx === -1) {
-    console.error(
-      `Error: instance "${instanceName}" not found in project "${project}".`,
-    );
-    if (proj.instances.length) {
-      console.error("Instances:");
-      for (const i of proj.instances) {
-        console.error(`  ${project}/${i.name}`);
-      }
+export async function uproot(targetOrProject: string | undefined, options: UprootOptions): Promise<void> {
+  try {
+    const selection = selectTargets(targetOrProject, options, process.cwd());
+    if (selection.fanOut && !options.force) {
+      throw new Error("uproot with a selector or --all requires --force");
     }
-    process.exit(1);
+    process.exitCode = selection.fanOut
+      ? await runSequential(selection.targets, (target) => uprootTarget(target, options))
+      : await uprootTarget(selection.targets[0], options);
+  } catch (error) {
+    console.error(`Error: ${(error as Error).message}`);
+    process.exitCode = 1;
   }
+}
 
-  const instance = proj.instances[idx];
+export async function uprootTarget(target: GroveTarget, options: Pick<UprootOptions, "force">): Promise<number> {
+  if (!target.instance) {
+    throw new Error(`${target.projectName} is the project source; grove uproot needs a planted instance`);
+  }
+  const { project: proj, projectName: project, instance } = target;
+  const instanceName = instance.name;
   const exists = fs.existsSync(instance.path);
 
   console.log(`Uprooting ${project}/${instanceName}`);
@@ -65,7 +56,7 @@ export async function uproot(ref: string, options: UprootOptions) {
   }
 
   if (Object.keys(ports).length) {
-    console.log(`  Ports:`);
+    console.log("  Ports:");
     for (const [svc, port] of Object.entries(ports)) {
       const up = await checkPort(port);
       console.log(`    ${svc}: ${port} ${up ? "\x1b[32m●\x1b[0m" : "\x1b[90m○\x1b[0m"}`);
@@ -74,44 +65,37 @@ export async function uproot(ref: string, options: UprootOptions) {
 
   if (!options.force) {
     if (!process.stdin.isTTY) {
-      console.error("Error: non-interactive shell. Use --force to skip confirmation.");
-      process.exit(1);
+      throw new Error("non-interactive shell. Use --force to skip confirmation.");
     }
     const ok = await confirm("\nProceed? (y/N) ");
     if (!ok) {
       console.log("Cancelled.");
-      return;
+      return 0;
     }
   }
 
-  let siblings: GroveSibling[] | undefined;
-  try {
-    siblings = await withRegistryLock(async (currentRegistry) => {
-      const currentProject = currentRegistry.projects[project];
-      const currentIndex = currentProject?.instances.findIndex((candidate) =>
-        candidate.name === instanceName &&
-        candidate.slot === instance.slot &&
-        candidate.path === instance.path &&
-        candidate.created === instance.created,
-      ) ?? -1;
-      if (!currentProject || currentIndex === -1) {
-        throw new Error(`${project}/${instanceName} is no longer registered`);
-      }
-      const currentInstance = currentProject.instances[currentIndex];
-      currentInstance.pending = "uprooting";
-      delete currentInstance.reservationId;
-      await saveRegistry(currentRegistry);
-      return [
-        { name: project, slot: 0, path: currentProject.source },
-        ...currentProject.instances
-          .filter((_, index) => index !== currentIndex)
-          .map(({ name, slot, path }) => ({ name, slot, path })),
-      ].sort((a, b) => a.slot - b.slot || a.name.localeCompare(b.name) || a.path.localeCompare(b.path));
-    });
-  } catch (error) {
-    console.error(`Error: ${(error as Error).message}`);
-    process.exit(1);
-  }
+  const siblings = await withRegistryLock(async (currentRegistry) => {
+    const currentProject = currentRegistry.projects[project];
+    const currentIndex = currentProject?.instances.findIndex((candidate) =>
+      candidate.name === instanceName &&
+      candidate.slot === instance.slot &&
+      candidate.path === instance.path &&
+      candidate.created === instance.created,
+    ) ?? -1;
+    if (!currentProject || currentIndex === -1) {
+      throw new Error(`${project}/${instanceName} is no longer registered`);
+    }
+    const currentInstance = currentProject.instances[currentIndex];
+    currentInstance.pending = "uprooting";
+    delete currentInstance.reservationId;
+    await saveRegistry(currentRegistry);
+    return [
+      { name: project, slot: 0, path: currentProject.source },
+      ...currentProject.instances
+        .filter((_, index) => index !== currentIndex)
+        .map(({ name, slot, path }) => ({ name, slot, path })),
+    ].sort((a, b) => a.slot - b.slot || a.name.localeCompare(b.name) || a.path.localeCompare(b.path));
+  });
 
   if (teardownPath) {
     contextEnv = groveContextEnv({
@@ -170,9 +154,9 @@ export async function uproot(ref: string, options: UprootOptions) {
       regenerateAliases(currentRegistry);
     });
   } catch (error) {
-    console.error(`Error: ${(error as Error).message}`);
-    process.exit(1);
+    throw new Error((error as Error).message);
   }
 
   console.log(`\nUprooted ${project}/${instanceName}.`);
+  return 0;
 }

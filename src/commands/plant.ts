@@ -36,6 +36,7 @@ import {
 } from "../state.js";
 import type { GroveApplied, GroveInstance } from "../types.js";
 import { configHash } from "../intent.js";
+import { parseLabelAssignments } from "../selection.js";
 
 interface PlantOptions {
   slot?: string;
@@ -43,6 +44,7 @@ interface PlantOptions {
   codeFrom?: string;
   from?: string;
   ignoreFingerprint?: boolean;
+  label?: string[];
 }
 
 export async function plant(
@@ -51,6 +53,13 @@ export async function plant(
   options: PlantOptions,
 ) {
   const codeFrom = (options.codeFrom ?? "configured") as CodeSource;
+  let labels: Record<string, string>;
+  try {
+    labels = parseLabelAssignments(options.label ?? []);
+  } catch (error) {
+    console.error(`Error: ${(error as Error).message}`);
+    process.exit(1);
+  }
   if (codeFrom !== "configured" && codeFrom !== "@source") {
     console.error(
       `Error: --code-from must be "configured" or "@source", got "${options.codeFrom}".`,
@@ -223,7 +232,7 @@ export async function plant(
       created: new Date().toISOString(),
       pending: "planting",
       reservationId,
-      spec: { codeFrom, from: options.from ?? BASELINE_REF, labels: {} },
+      spec: { codeFrom, from: options.from ?? BASELINE_REF, labels },
       applied: null,
     };
     if (pendingRef) instance.needsState = pendingRef;
@@ -390,7 +399,7 @@ export async function plant(
     code: repoConfig?.repos
       ? { mode: codeFrom, repos: describeClonedRepos(targetPath, repoConfig.repos) }
       : null,
-    spec: { codeFrom, from: options.from ?? BASELINE_REF, labels: {} },
+    spec: { codeFrom, from: options.from ?? BASELINE_REF, labels },
     applied,
   };
 

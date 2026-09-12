@@ -6,76 +6,77 @@ import { groveContextEnv } from "../context.js";
 import { configHash } from "../intent.js";
 import { computePorts } from "../ports.js";
 import { saveRegistry, withRegistryLock } from "../registry.js";
+import { currentRegisteredTarget, runSequential, selectTargets, type TargetingOptions } from "../selection.js";
 import { loadSettings } from "../settings.js";
 import { applyExistingCheckoutSetup, describeAppliedCode } from "../setup.js";
-import { assertTargetUsable, resolveTargetFromRef, targetSlot } from "../target.js";
-import type { GroveApplied } from "../types.js";
+import { assertTargetUsable, type GroveTarget, targetSlot } from "../target.js";
 
-interface ApplyOptions {
+interface ApplyOptions extends TargetingOptions {
   force?: boolean;
 }
 
 /** Converge an existing instance's Grove-owned configuration without touching code or state. */
-export async function apply(targetRef: string, options: ApplyOptions): Promise<void> {
+export async function apply(targetOrProject: string | undefined, options: ApplyOptions): Promise<void> {
   try {
-    const target = resolveTargetFromRef(targetRef);
-    if (!target.instance) {
-      throw new Error(`${targetRef} is the project source; grove apply needs a planted instance (for example ${target.projectName}/1)`);
-    }
-    assertTargetUsable(target);
-    const targetInstance = target.instance;
+    const selection = selectTargets(targetOrProject, options, process.cwd());
+    process.exitCode = selection.fanOut
+      ? await runSequential(selection.targets, (target) => applyTarget(target, options))
+      : await applyTarget(selection.targets[0], options);
+  } catch (error) {
+    console.error(`Error: ${(error as Error).message}`);
+    process.exitCode = 1;
+  }
+}
 
-    const configFile = target.project.configFile ?? GROVE_CONFIG_FILE;
-    const sourceConfig = loadRepoConfig(target.project.source, configFile);
-    assertPortContract(target.project.ports, sourceConfig?.ports);
+export async function applyTarget(target: GroveTarget, options: Pick<ApplyOptions, "force">): Promise<number> {
+  if (!target.instance) {
+    throw new Error(`${target.projectName} is the project source; grove apply needs a planted instance (for example ${target.projectName}/1)`);
+  }
+  // Keep uproot from replacing this slot while setup writes the checkout.
+  return withRegistryLock(async (registry) => {
+    const current = currentRegisteredTarget(registry, target);
+    assertTargetUsable(current);
+    const targetInstance = current.instance!;
+    const configFile = current.project.configFile ?? GROVE_CONFIG_FILE;
+    const sourceConfig = loadRepoConfig(current.project.source, configFile);
+    assertPortContract(current.project.ports, sourceConfig?.ports);
     const settings = loadSettings();
     const context = {
-      projectName: target.projectName,
-      source: target.project.source,
-      target: target.root,
-      slot: targetSlot(target),
+      projectName: current.projectName,
+      source: current.project.source,
+      target: current.root,
+      slot: targetSlot(current),
       instanceName: targetInstance.name,
-      ports: computePorts(sourceConfig?.ports ?? target.project.ports, targetSlot(target)),
+      ports: computePorts(sourceConfig?.ports ?? current.project.ports, targetSlot(current)),
     };
 
     // Build the shared environment and validate every configured repository
     // before any setup phase can rewrite the target. --force permits dirty
     // worktrees, not a missing checkout.
     groveContextEnv(context, process.env, settings);
-    assertRepositoriesReadyForApply(target.root, sourceConfig?.repos, options.force === true);
+    assertRepositoriesReadyForApply(current.root, sourceConfig?.repos, options.force === true);
 
-    console.log(`Applying ${target.projectName}/${targetInstance.name} (slot ${targetInstance.slot})`);
+    console.log(`Applying ${current.projectName}/${targetInstance.name} (slot ${targetInstance.slot})`);
     applyExistingCheckoutSetup(
-      target.project.source,
-      target.root,
+      current.project.source,
+      current.root,
       sourceConfig,
-      target.project.ports,
+      current.project.ports,
       configFile,
       context,
       settings,
     );
 
-    const applied: GroveApplied = {
+    targetInstance.applied = {
       configHash: configHash(sourceConfig),
       at: new Date().toISOString(),
-      code: describeAppliedCode(target.root, sourceConfig?.repos),
+      code: describeAppliedCode(current.root, sourceConfig?.repos),
     };
-    await withRegistryLock(async (registry) => {
-      const instance = registry.projects[target.projectName]?.instances.find((candidate) =>
-        candidate.name === targetInstance.name &&
-        candidate.slot === targetInstance.slot &&
-        candidate.path === targetInstance.path,
-      );
-      if (!instance) throw new Error(`${target.projectName}/${targetInstance.name} is no longer registered`);
-      instance.applied = applied;
-      await saveRegistry(registry);
-    });
+    await saveRegistry(registry);
 
-    console.log(`Applied: ${target.projectName}/${targetInstance.name}`);
-  } catch (error) {
-    console.error(`Error: ${(error as Error).message}`);
-    process.exitCode = 1;
-  }
+    console.log(`Applied: ${current.projectName}/${targetInstance.name}`);
+    return 0;
+  });
 }
 
 function assertPortContract(

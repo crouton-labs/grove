@@ -45,6 +45,9 @@ function renderTarget(project: string, target: InventoryTarget, source: boolean)
   if (target.configStale) {
     console.log(`    \x1b[33mstale config\x1b[0m — grove apply ${project}/${target.name}`);
   }
+  if (target.spec && Object.keys(target.spec.labels).length) {
+    console.log(`    labels: ${Object.entries(target.spec.labels).sort(([a], [b]) => a.localeCompare(b)).map(([key, value]) => `${key}=${value}`).join(" ")}`);
+  }
   if (target.ports.length) {
     console.log(`    ${target.ports.map((port) => `${port.name}:${port.port} ${port.live ? "\x1b[32m●\x1b[0m" : "\x1b[90m○\x1b[0m"}`).join("  ")}`);
   }

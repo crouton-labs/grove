@@ -1,11 +1,6 @@
-import { dispatchLifecycle } from "../lifecycle.js";
-import { resolveTarget } from "../target.js";
+import { runLifecycleCommand } from "./lifecycle.js";
+import type { TargetingOptions } from "../selection.js";
 
-export function status(targetRef: string): void {
-  try {
-    process.exitCode = dispatchLifecycle(resolveTarget({ at: targetRef, cwd: process.cwd() })!, "status");
-  } catch (error) {
-    console.error(`Error: ${(error as Error).message}`);
-    process.exitCode = 1;
-  }
+export async function status(targetOrProject: string | undefined, options: TargetingOptions): Promise<void> {
+  await runLifecycleCommand("status", targetOrProject, options);
 }

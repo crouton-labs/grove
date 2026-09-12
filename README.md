@@ -90,13 +90,23 @@ The two intentional launches are `grove plant <project> onboarding` — configur
 
 ## Apply and configuration drift
 
-Every planted instance records its requested `spec` (`codeFrom`, state `from`, and future-facing `labels`) and what Grove last applied: a SHA-256 `configHash`, time, and the branch and commit in each configured repository. The hash is the canonical JSON of the validated source config: object keys are sorted recursively and arrays retain their declared order. Whitespace and object-key order therefore do not make an instance stale.
+Every planted instance records its requested `spec` (`codeFrom`, state `from`, and `labels`) and what Grove last applied: a SHA-256 `configHash`, time, and the branch and commit in each configured repository. The hash is the canonical JSON of the validated source config: object keys are sorted recursively and arrays retain their declared order. Whitespace and object-key order therefore do not make an instance stale.
 
-`grove apply <project/instance>` converges an existing checkout without cloning code or changing data state. It reruns `copyFromSource`, `secrets`, `patchPortsIn`, `substituteIn`, `install`, and `setup.sh`, then records the current validated source config as applied. It refuses the source checkout, a planting instance, a source port contract that differs from the registered project ports (run `grove register --update` first), and any configured repository that is not a Git checkout. It also refuses tracked repository changes; pass `--force` only when overwriting tracked changes is intended. Untracked files are not a refusal and `copyFromSource` may overwrite them.
+`grove apply <project/instance>` converges an existing checkout without cloning code or changing data state. It can also select a fleet as described in [Labels, selectors, and fan-out](#labels-selectors-and-fan-out). It reruns `copyFromSource`, `secrets`, `patchPortsIn`, `substituteIn`, `install`, and `setup.sh`, then records the current validated source config as applied. It refuses the source checkout, a planting instance, a source port contract that differs from the registered project ports (run `grove register --update` first), and any configured repository that is not a Git checkout. It also refuses tracked repository changes; pass `--force` only when overwriting tracked changes is intended. Untracked files are not a refusal and `copyFromSource` may overwrite them.
 
 Port patching and substitutions write a file only when its content changes, so a second apply leaves an already-patched file unchanged. A substitution replacement may match its own pattern when the second substitution is unchanged, such as a canonical final identity.
 
 `grove doctor` reports `built from older config — grove apply <project>/<name>` when the current source config hash differs from the recorded one. `grove list` marks the same instance `stale config`; `grove list --json` includes each instance's `spec`, `applied`, and `configStale` fields.
+
+## Labels, selectors, and fan-out
+
+Pass `--label key=value` repeatedly to `grove plant` to record labels on a new instance. Label keys must match `[a-z0-9._-]+`; values must be non-empty and cannot contain a comma. Change labels later with `grove label <target> key=value ... [--rm key]`. `grove list` prints labels, and `grove list --json` carries them in `spec.labels`.
+
+The `start`, `stop`, `status`, `reset`, `restore`, `apply`, `uproot`, and `label` commands target one explicit `<target>` as before, instances matching every label pair with `-l key=value[,key=value] [project]`, or every planted instance with `--all [project]`. Omit `[project]` only when the current directory is in a registered project or exactly one project is registered. A selector matching no instances refuses and names the selector. The source at slot 0 is never selected by `-l` or `--all`; name it explicitly only for commands that permit the source.
+
+A selector or `--all` walks selected instances sequentially in slot order. Grove stops at the first non-zero exit and prints a summary showing each target that succeeded, failed, or never started. `grove uproot -l ...` and `grove uproot --all` require `--force`; explicit `grove uproot <project/name>` retains its confirmation prompt.
+
+For `restore`, use `grove restore <target> <ref>` for one target and `grove restore [project] <ref> -l ...` or `grove restore [project] <ref> --all` for a set. For `label`, use `grove label [project] key=value ... -l ...` or `grove label [project] key=value ... --all` for a set.
 
 ## State
 
@@ -172,20 +182,21 @@ The project comes from the `[project]` argument, else the registered project con
 grove setup [source]
 grove register <source> [--config <relative-path>] [--update]
 grove dev [--at <target>] [raw argv...]
-grove plant <project> [name] [--slot <n>] [--code-from <mode>] [--from <ref>] [--ignore-fingerprint]
-grove apply <project/instance> [--force]
+grove plant <project> [name] [--slot <n>] [--code-from <mode>] [--from <ref>] [--ignore-fingerprint] [--label <key=value>...]
+grove apply [target-or-project] [-l <key=value[,key=value]> | --all] [--force]
 grove adopt <project> <name> <path> [--slot <n>]
 grove list [project] [--json]
 grove open [target] [--json]
-grove start <target>
-grove stop <target>
-grove status <target>
-grove reset <target>
+grove start [target-or-project] [-l <key=value[,key=value]> | --all]
+grove stop [target-or-project] [-l <key=value[,key=value]> | --all]
+grove status [target-or-project] [-l <key=value[,key=value]> | --all]
+grove reset [target-or-project] [-l <key=value[,key=value]> | --all]
+grove label [target-or-project] [key=value...] [-l <key=value[,key=value]> | --all] [--rm <key>...]
 grove doctor [project]
 grove ui [project]
-grove uproot <project/name> [--force]
+grove uproot [target-or-project] [-l <key=value[,key=value]> | --all] [--force]
 grove snapshot <project/instance> <name> [--force]
-grove restore <project/instance> <ref> [--force] [--ignore-fingerprint]
+grove restore [target-or-project] [ref] [-l <key=value[,key=value]> | --all] [--force] [--ignore-fingerprint]
 grove states [project] [--rm <name>]
 ```
 
