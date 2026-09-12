@@ -20,7 +20,7 @@ const STATUS_PREFIX_WIDTH = 8;
 /** Empty rows shown by default, which keeps every digit key 0-9 on a row. */
 const DEFAULT_SLOT_WINDOW = 9;
 /** Terminal rows the table cannot have: the chrome statusRowBudget subtracts, plus one status row. */
-const RESERVED_ROWS = 10;
+const RESERVED_ROWS = 9;
 
 export async function ui(projectRef?: string): Promise<void> {
   try {
@@ -98,30 +98,37 @@ interface Row {
   target: InventoryTarget | null;
 }
 
-function buildRows(project: InventoryProject, highestEmptySlot: number): Row[] {
+/**
+ * The rows the table shows, and how many it had to drop. Every slot the project has is a row —
+ * the source at slot 0, each instance, and each empty slot up to the project's computed cap (or
+ * the default window when `maxSlot === null`, rather than filling a tall terminal with empty
+ * rows). The terminal-height cap then applies to that whole list, not only to the generated empty
+ * rows: an instance at a high slot costs a row like any other, every row comes out of the status
+ * region's budget, and a table taller than the terminal pushes the footer off screen. When rows
+ * are dropped, one of the rows that fit goes to the notice that says so, so the table never
+ * silently hides a slot.
+ */
+function buildRows(project: InventoryProject, terminalRows: number): { rows: Row[]; hidden: number } {
   const rows: Row[] = [{ key: "source", slot: 0, isSource: true, target: project.source_target }];
   const occupied = new Set<number>();
   for (const instance of project.instances) {
     rows.push({ key: `i:${instance.name}`, slot: instance.slot, isSource: false, target: instance });
     occupied.add(instance.slot);
   }
+  const highestEmptySlot = project.maxSlot === null ? DEFAULT_SLOT_WINDOW : project.maxSlot;
   for (let slot = 1; slot <= highestEmptySlot; slot++) {
     if (!occupied.has(slot)) rows.push({ key: `empty:${slot}`, slot, isSource: false, target: null });
   }
-  return rows.sort((a, b) => a.slot - b.slot || (a.isSource ? -1 : b.isSource ? 1 : 0));
+  rows.sort((a, b) => a.slot - b.slot || (a.isSource ? -1 : b.isSource ? 1 : 0));
+  // A terminal short enough to leave under two rows has already overrun; holding the floor at two
+  // keeps one slot and its notice rather than a row that claims the table is complete.
+  const fits = Math.max(2, terminalRows - RESERVED_ROWS);
+  if (rows.length <= fits) return { rows, hidden: 0 };
+  return { rows: rows.slice(0, fits - 1), hidden: rows.length - (fits - 1) };
 }
 
-/**
- * The highest empty slot to offer. A project whose declared ports cap slots never offers one past
- * the cap, because plant would refuse it. Past the tenth slot the table only grows into terminal
- * rows it has: every slot row comes out of the status region's budget, and a table taller than the
- * terminal pushes the footer off screen. A project with no cap (`maxSlot === null`) stays at the
- * default window rather than filling a tall terminal with empty rows.
- */
-function slotWindow(project: InventoryProject, terminalRows: number): number {
-  const fits = Math.max(0, terminalRows - RESERVED_ROWS);
-  return project.maxSlot === null ? Math.min(DEFAULT_SLOT_WINDOW, fits) : Math.min(project.maxSlot, fits);
-}
+const hiddenRowNotice = (hidden: number) =>
+  `… ${hidden} more ${hidden === 1 ? "slot" : "slots"} not shown — the terminal is too short`;
 
 /** The single branch every repo agrees on, or the literal word `mixed`. */
 function aggregateBranch(target: InventoryTarget): string {
@@ -254,7 +261,10 @@ function App({ projectName }: { projectName: string }) {
   }, [running]);
 
   const terminalRows = stdout?.rows ?? 24;
-  const rows = useMemo(() => (project ? buildRows(project, slotWindow(project, terminalRows)) : []), [project, terminalRows]);
+  const { rows, hidden } = useMemo(
+    () => (project ? buildRows(project, terminalRows) : { rows: [] as Row[], hidden: 0 }),
+    [project, terminalRows],
+  );
   const index = Math.max(0, rows.findIndex((row) => row.slot === slot));
   const row = rows[index] as Row | undefined;
   const target = row?.target ?? null;
@@ -389,10 +399,11 @@ function App({ projectName }: { projectName: string }) {
       return;
     }
     if (/^[0-9]$/.test(input)) {
-      // Only slots the table shows can be selected: a project's port cap can put a slot below 9 out
-      // of reach, and selecting a slot with no row would leave the cursor on a row it does not name.
-      const next = rows.find((entry) => entry.slot === Number(input));
-      if (!next) return setMessage(`no slot ${input} — this project shows slots 0-${rows[rows.length - 1].slot}.`);
+      // A digit addresses the table's first ten rows, not the slot of that number: a project's port
+      // cap, an instance at a high slot, or a short terminal can all leave slot N off the table, and
+      // selecting a slot with no row would leave the cursor on a row it does not name.
+      const next = rows[Number(input)];
+      if (!next) return setMessage(`no row ${input} — this table shows ${rows.length} row${rows.length === 1 ? "" : "s"}.`);
       setSlot(next.slot);
       setAction(null);
       return;
@@ -448,7 +459,7 @@ function App({ projectName }: { projectName: string }) {
 
   const width = stdout?.columns ?? 100;
   const declares = (role: LifecycleRole) => Boolean(target?.lifecycle.includes(role));
-  const statusBudget = statusRowBudget(terminalRows, rows.length);
+  const statusBudget = statusRowBudget(terminalRows, rows.length + (hidden > 0 ? 1 : 0));
 
   return (
     <Box flexDirection="column" width={width}>
@@ -462,6 +473,7 @@ function App({ projectName }: { projectName: string }) {
       {rows.map((entry, entryIndex) => (
         <SlotRow key={entry.key} row={entry} selected={entryIndex === index} />
       ))}
+      {hidden > 0 ? <Text dimColor wrap="truncate-end">{hiddenRowNotice(hidden)}</Text> : null}
       <Text dimColor>{"─".repeat(Math.max(10, width - 1))}</Text>
       {action ? (
         <ActionPane action={action} />
@@ -595,11 +607,11 @@ function DetailPane({
 
 /**
  * How many terminal rows the status region may occupy. Everything else on screen is one row each:
- * the title, the column header, one line per slot, two dividers, the message line, the footer, and
- * the detail pane's own target and repos lines.
+ * the title, the column header, every table row (each slot, plus the dropped-rows notice when there
+ * is one), two dividers, the message line, the footer, and the detail pane's target and repos lines.
  */
-function statusRowBudget(terminalRows: number, slotRows: number): number {
-  return Math.max(0, terminalRows - (slotRows + 8));
+function statusRowBudget(terminalRows: number, tableRows: number): number {
+  return Math.max(0, terminalRows - (tableRows + 8));
 }
 
 const statusNotice = (hidden: number) => `… ${hidden} more ${hidden === 1 ? "line" : "lines"} not shown`;
@@ -698,7 +710,7 @@ function HelpPane() {
   return (
     <Box flexDirection="column">
       <Text bold>keys</Text>
-      <Text>↑/k ↓/j move · 0-9 jump to slot · o switch to the slot's tmux session and exit</Text>
+      <Text>↑/k ↓/j move · 0-9 jump to one of the first ten rows · o switch to the slot's tmux session and exit</Text>
       <Text>p plant an empty slot · u uproot (confirms) · s start · S stop · r reset (confirms)</Text>
       <Text>t run the project's status verb · R git fetch every repo, then re-read</Text>
       <Text>q or Esc quit · Ctrl-C interrupts a running action, or quits when idle</Text>

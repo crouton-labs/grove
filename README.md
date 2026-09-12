@@ -127,7 +127,7 @@ Grove derives the session name as `<project>-<slot>`: `northlight-3` for slot 3 
 
 ## grove ui
 
-`grove ui [project]` is a terminal UI over one project's slots — it shows the source at slot 0 and empty rows through the project's computed slot cap, limited to rows that fit in the terminal.
+`grove ui [project]` is a terminal UI over one project's slots — it shows the source at slot 0, every instance, and empty rows through the project's computed slot cap, limited to rows that fit in the terminal. When the terminal is too short for all of them, the table keeps the lowest slots that fit and ends with `… N more slots not shown`.
 
 ```
 grove ui — northlight  /Users/silasrhyneer/Code/northlight/grove/0
@@ -141,7 +141,8 @@ A composite project has several repos per slot, so each column aggregates them: 
 
 | key | action |
 |---|---|
-| `↑`/`k`, `↓`/`j`, `0`–`9` | move the cursor |
+| `↑`/`k`, `↓`/`j` | move the cursor |
+| `0`–`9` | jump to one of the table's first ten rows |
 | `o` | switch to the slot's tmux session, creating it if absent, and exit |
 | `p` | plant the selected empty slot |
 | `u` | uproot the selected instance, after a `y/n` confirmation |
