@@ -5,6 +5,7 @@ import {
   instanceContext,
   parseInstanceRef,
   stateNotAppliedError,
+  plantingError,
   writeSnapshot,
 } from "../state.js";
 
@@ -22,6 +23,9 @@ export async function snapshot(ref: string, name: string, options: SnapshotOptio
     }
 
     const instance = findInstance(project, projectName, instanceName);
+    if (instance.pending === "planting") {
+      throw new Error(plantingError(projectName, instance));
+    }
     if (instance.needsState) {
       throw new Error(stateNotAppliedError(projectName, instance));
     }

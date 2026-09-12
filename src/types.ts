@@ -13,6 +13,10 @@ export interface GroveInstance {
    * instance exists without its data state; a successful restore clears it.
    */
   needsState?: string;
+  /** Present while plant has reserved this slot but has not completed. */
+  pending?: "planting";
+  /** Identifies the specific plant attempt that owns a pending reservation. */
+  reservationId?: string;
 }
 
 export interface GroveProjectConfig {

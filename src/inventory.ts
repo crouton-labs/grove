@@ -2,7 +2,7 @@ import { execFile } from "child_process";
 import fs from "fs";
 import path from "path";
 import { loadRepoConfig, type GroveRepoConfig } from "./config.js";
-import { computePorts, checkPort } from "./ports.js";
+import { computePorts, checkPort, maxSlot } from "./ports.js";
 import { loadRegistry } from "./registry.js";
 import { targetSlot, type GroveTarget } from "./target.js";
 import { tmuxSessionName } from "./tmux.js";
@@ -30,6 +30,7 @@ export interface InventoryTarget {
   exists: boolean;
   created: string | null;
   needsState: string | null;
+  pending: "planting" | null;
   tmuxSession: string;
   lifecycle: string[];
   ports: InventoryPort[];
@@ -42,6 +43,8 @@ export interface InventoryProject {
   configFile: string;
   sourceExists: boolean;
   nameIsSlot: boolean;
+  /** null means declared ports place no upper bound on slots. */
+  maxSlot: number | null;
   source_target: InventoryTarget;
   instances: InventoryTarget[];
 }
@@ -59,6 +62,7 @@ export async function gatherInventory(projectName?: string): Promise<GroveInvent
     const sourceExists = fs.existsSync(project.source);
     const sourceConfig = sourceExists ? loadRepoConfig(project.source, project.configFile) : null;
     const lifecycle = Object.keys(sourceConfig?.lifecycle ?? {});
+    const projectMaxSlot = maxSlot(project.ports);
     const sourceTarget: GroveTarget = { project, projectName: name, root: path.resolve(project.source) };
     const instances = [...project.instances]
       .sort((a, b) => a.slot - b.slot)
@@ -73,6 +77,7 @@ export async function gatherInventory(projectName?: string): Promise<GroveInvent
       configFile: project.configFile ?? ".grove/config.json",
       sourceExists,
       nameIsSlot: sourceConfig?.nameIsSlot ?? false,
+      maxSlot: Number.isFinite(projectMaxSlot) ? projectMaxSlot : null,
       source_target,
       instances: instanceTargets,
     };
@@ -104,6 +109,7 @@ async function gatherTarget(
     exists,
     created: target.instance?.created ?? null,
     needsState: target.instance?.needsState ?? null,
+    pending: target.instance?.pending ?? null,
     tmuxSession: tmuxSessionName(target),
     lifecycle,
     ports: await portChecks,

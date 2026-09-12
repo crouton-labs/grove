@@ -17,6 +17,10 @@ import { killSessionOnStop, switchToSession } from "../tmux.js";
 
 const LOG_LINES = 12;
 const STATUS_PREFIX_WIDTH = 8;
+/** Empty rows shown by default, which keeps every digit key 0-9 on a row. */
+const DEFAULT_SLOT_WINDOW = 9;
+/** Terminal rows the table cannot have: the chrome statusRowBudget subtracts, plus one status row. */
+const RESERVED_ROWS = 10;
 
 export async function ui(projectRef?: string): Promise<void> {
   try {
@@ -94,17 +98,29 @@ interface Row {
   target: InventoryTarget | null;
 }
 
-function buildRows(project: InventoryProject): Row[] {
+function buildRows(project: InventoryProject, highestEmptySlot: number): Row[] {
   const rows: Row[] = [{ key: "source", slot: 0, isSource: true, target: project.source_target }];
   const occupied = new Set<number>();
   for (const instance of project.instances) {
     rows.push({ key: `i:${instance.name}`, slot: instance.slot, isSource: false, target: instance });
     occupied.add(instance.slot);
   }
-  for (let slot = 1; slot <= 9; slot++) {
+  for (let slot = 1; slot <= highestEmptySlot; slot++) {
     if (!occupied.has(slot)) rows.push({ key: `empty:${slot}`, slot, isSource: false, target: null });
   }
   return rows.sort((a, b) => a.slot - b.slot || (a.isSource ? -1 : b.isSource ? 1 : 0));
+}
+
+/**
+ * The highest empty slot to offer. A project whose declared ports cap slots never offers one past
+ * the cap, because plant would refuse it. Past the tenth slot the table only grows into terminal
+ * rows it has: every slot row comes out of the status region's budget, and a table taller than the
+ * terminal pushes the footer off screen. A project with no cap (`maxSlot === null`) stays at the
+ * default window rather than filling a tall terminal with empty rows.
+ */
+function slotWindow(project: InventoryProject, terminalRows: number): number {
+  const fits = Math.max(0, terminalRows - RESERVED_ROWS);
+  return project.maxSlot === null ? Math.min(DEFAULT_SLOT_WINDOW, fits) : Math.min(project.maxSlot, fits);
 }
 
 /** The single branch every repo agrees on, or the literal word `mixed`. */
@@ -237,7 +253,8 @@ function App({ projectName }: { projectName: string }) {
     return () => clearInterval(timer);
   }, [running]);
 
-  const rows = useMemo(() => (project ? buildRows(project) : []), [project]);
+  const terminalRows = stdout?.rows ?? 24;
+  const rows = useMemo(() => (project ? buildRows(project, slotWindow(project, terminalRows)) : []), [project, terminalRows]);
   const index = Math.max(0, rows.findIndex((row) => row.slot === slot));
   const row = rows[index] as Row | undefined;
   const target = row?.target ?? null;
@@ -372,7 +389,11 @@ function App({ projectName }: { projectName: string }) {
       return;
     }
     if (/^[0-9]$/.test(input)) {
-      setSlot(Number(input));
+      // Only slots the table shows can be selected: a project's port cap can put a slot below 9 out
+      // of reach, and selecting a slot with no row would leave the cursor on a row it does not name.
+      const next = rows.find((entry) => entry.slot === Number(input));
+      if (!next) return setMessage(`no slot ${input} — this project shows slots 0-${rows[rows.length - 1].slot}.`);
+      setSlot(next.slot);
       setAction(null);
       return;
     }
@@ -427,7 +448,7 @@ function App({ projectName }: { projectName: string }) {
 
   const width = stdout?.columns ?? 100;
   const declares = (role: LifecycleRole) => Boolean(target?.lifecycle.includes(role));
-  const statusBudget = statusRowBudget(stdout?.rows ?? 24, rows.length);
+  const statusBudget = statusRowBudget(terminalRows, rows.length);
 
   return (
     <Box flexDirection="column" width={width}>
@@ -492,6 +513,16 @@ function SlotRow({ row, selected }: { row: Row; selected: boolean }) {
       <Text color={selected ? "cyan" : undefined}>
         {`${cursor}${String(row.slot).padStart(3)}  ${pad(name, 13)}`}
         <Text dimColor>(empty)</Text>
+      </Text>
+    );
+  }
+  // A reserved slot is checked before the directory, because plant registers the instance before it
+  // creates anything: an in-flight or interrupted plant is planting, not a zombie.
+  if (target.pending === "planting") {
+    return (
+      <Text color={selected ? "cyan" : undefined}>
+        {`${cursor}${String(row.slot).padStart(3)}  ${pad(name, 13)}`}
+        <Text color="yellow">planting</Text>
       </Text>
     );
   }

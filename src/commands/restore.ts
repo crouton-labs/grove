@@ -1,4 +1,4 @@
-import { loadRegistry, saveRegistry } from "../registry.js";
+import { loadRegistry, saveRegistry, withRegistryLock } from "../registry.js";
 import { confirm } from "../prompt.js";
 import {
   applyRef,
@@ -7,6 +7,7 @@ import {
   instanceContext,
   parseInstanceRef,
   resolveRef,
+  plantingError,
 } from "../state.js";
 
 interface RestoreOptions {
@@ -24,6 +25,7 @@ export async function restore(instanceRef: string, stateRef: string, options: Re
     }
 
     const instance = findInstance(project, projectName, instanceName);
+    if (instance.pending === "planting") throw new Error(plantingError(projectName, instance));
     const dest = instanceContext(project, projectName, instanceName);
     const ref = resolveRef(projectName, project, stateRef);
 
@@ -53,8 +55,12 @@ export async function restore(instanceRef: string, stateRef: string, options: Re
     applyRef(project, ref, dest, options.ignoreFingerprint === true);
 
     if (instance.needsState) {
-      delete instance.needsState;
-      saveRegistry(registry);
+      await withRegistryLock((currentRegistry) => {
+        const current = currentRegistry.projects[projectName]?.instances.find((candidate) => candidate.name === instanceName);
+        if (!current) throw new Error(`${projectName}/${instanceName} is no longer registered`);
+        delete current.needsState;
+        saveRegistry(currentRegistry);
+      });
     }
 
     console.log("");

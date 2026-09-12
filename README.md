@@ -1,6 +1,6 @@
 # Grove
 
-Grove manages parallel project instances with isolated slot-based ports. Each registered project defines ports as `base + slot × offset`; `grove plant` clones or copies the project, applies the slot configuration, installs dependencies, and runs the project setup script.
+Grove manages parallel project instances with isolated slot-based ports. Each registered project defines ports as `base + slot × offset`; `grove plant` reserves a slot, then clones or copies the project, applies the slot configuration, installs dependencies, and runs the project setup script. Registry changes are serialized with `~/.grove/grove.lock`, so concurrent plants cannot take the same slot.
 
 ## Development
 
@@ -61,6 +61,8 @@ A version 1 config can define:
 
 `in` is a glob list relative to the target root, `find` is a JavaScript regular expression applied globally to each matching file, and `replace` is its replacement template with `${slot}` expanded to the slot number and `${machine}` expanded to the machine handle. Capture groups (`$1`, `$<name>`) work as usual. Grove compiles `find` when it validates the config, so a bad pattern is a refusal naming the rule rather than a half-rewritten instance. Rules run after `patchPortsIn`, and never against `.grove/config.json` itself.
 
+Grove computes the slot cap from the declared ports: it is the largest slot N for which every port in slots 0 through N is distinct and at most 65535. `grove register` and `grove setup` print that cap; `grove plant` refuses a slot above it. A project with no declared ports has no port-derived cap.
+
 Slot 0 is not special-cased the way ports are: a rule that produces the value the source already holds simply rewrites nothing.
 
 ## Code
@@ -113,7 +115,7 @@ Grove derives the session name as `<project>-<slot>`: `northlight-3` for slot 3 
 
 ## grove ui
 
-`grove ui [project]` is a terminal UI over one project's slots — one row per slot 0–9, with the source at slot 0 and `(empty)` for a free slot.
+`grove ui [project]` is a terminal UI over one project's slots — it shows the source at slot 0 and empty rows through the project's computed slot cap, limited to rows that fit in the terminal.
 
 ```
 grove ui — northlight  /Users/silasrhyneer/Code/northlight/grove/0
@@ -169,6 +171,6 @@ grove states [project] [--rm <name>]
 
 `grove plant` prints a `--- grove-output ---` JSON block for callers that need the created path, slot, ports, state ref, and the branch and commit each repo landed on.
 
-An instance is registered once its checkout is built, before its state is applied, so a state failure leaves a named instance rather than an orphan directory. Until state lands, `grove list` and `grove doctor` mark it `state not applied`, `grove dev` and `grove snapshot` refuse and name the restore command, and a successful `grove restore` clears it.
+`grove plant` writes a `planting` reservation before it creates or copies files, so concurrent plants get different slots and an interrupted plant remains visible rather than leaving an untracked directory. `grove list`, `grove doctor`, and `grove ui` mark that entry `planting`; `grove dev`, lifecycle commands, `grove snapshot`, and `grove restore` refuse it. Remove a partial planting with `grove uproot <project/name> --force`. Once planting succeeds, Grove clears the marker. An instance whose state was not applied is still marked `state not applied` and can be repaired with `grove restore`.
 
 Grove does not infer a moved config path. Re-run `grove register <source> --config <relative-path> --update`; config-backed re-registration replaces stored ports, aliases, init, teardown, and development-command values.

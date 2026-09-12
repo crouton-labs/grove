@@ -1,6 +1,6 @@
 import fs from "fs";
 import { execSync } from "child_process";
-import { loadRegistry, saveRegistry } from "../registry.js";
+import { loadRegistry, saveRegistry, withRegistryLock } from "../registry.js";
 import { confirm } from "../prompt.js";
 import { computePorts, checkPort } from "../ports.js";
 import { loadRepoConfig, resolveProjectPath } from "../config.js";
@@ -131,9 +131,21 @@ export async function uproot(ref: string, options: UprootOptions) {
   }
 
   // --- Phase 4: Update registry ---
-  proj.instances.splice(idx, 1);
-  saveRegistry(registry);
-  regenerateAliases(registry);
+  try {
+    await withRegistryLock((currentRegistry) => {
+      const currentProject = currentRegistry.projects[project];
+      const currentIndex = currentProject?.instances.findIndex((candidate) => candidate.name === instanceName) ?? -1;
+      if (!currentProject || currentIndex === -1) {
+        throw new Error(`${project}/${instanceName} is no longer registered`);
+      }
+      currentProject.instances.splice(currentIndex, 1);
+      saveRegistry(currentRegistry);
+      regenerateAliases(currentRegistry);
+    });
+  } catch (error) {
+    console.error(`Error: ${(error as Error).message}`);
+    process.exit(1);
+  }
 
   console.log(`\nUprooted ${project}/${instanceName}.`);
 }

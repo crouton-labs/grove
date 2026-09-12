@@ -1,6 +1,6 @@
 import path from "path";
 import fs from "fs";
-import { loadRegistry, saveRegistry } from "../registry.js";
+import { saveRegistry, withRegistryLock } from "../registry.js";
 import {
   GROVE_CONFIG_FILE,
   loadRepoConfig,
@@ -9,6 +9,7 @@ import {
   resolveStateCommand,
 } from "../config.js";
 import { PortDef } from "../types.js";
+import { formatSlotCap, maxSlot } from "../ports.js";
 import { regenerateAliases } from "../aliases.js";
 
 interface RegisterOptions {
@@ -27,8 +28,7 @@ export async function register(projectPath: string, options: RegisterOptions) {
     process.exit(1);
   }
 
-  const registry = loadRegistry();
-
+  await withRegistryLock(async (registry) => {
   const ports: Record<string, PortDef> = {};
   let initScript: string | undefined = options.init;
   let teardownScript: string | undefined = options.teardown;
@@ -123,6 +123,7 @@ export async function register(projectPath: string, options: RegisterOptions) {
       if (teardownScript) existing.teardownScript = teardownScript;
       if (aliases) existing.aliases = aliases;
     }
+    const slotCap = maxSlot(existing.ports);
     saveRegistry(registry);
     regenerateAliases(registry);
 
@@ -139,9 +140,11 @@ export async function register(projectPath: string, options: RegisterOptions) {
         console.log(`    ${n}: ${p.base} + slot × ${p.offset}`);
       }
     }
+    console.log(`  Slot cap: ${formatSlotCap(slotCap)}`);
     return;
   }
 
+  const slotCap = maxSlot(ports);
   registry.projects[name] = {
     source: absPath,
     configFile: repoConfig ? configFile : undefined,
@@ -168,4 +171,6 @@ export async function register(projectPath: string, options: RegisterOptions) {
       console.log(`    ${n}: ${p.base} + slot × ${p.offset}`);
     }
   }
+  console.log(`  Slot cap: ${formatSlotCap(slotCap)}`);
+  });
 }

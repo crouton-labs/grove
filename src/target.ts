@@ -2,7 +2,7 @@ import fs from "fs";
 import path from "path";
 import { isWithinRoot } from "./config.js";
 import { loadRegistry } from "./registry.js";
-import { parseInstanceRef, stateNotAppliedError } from "./state.js";
+import { parseInstanceRef, plantingError, stateNotAppliedError } from "./state.js";
 import type { GroveInstance, GroveProjectConfig } from "./types.js";
 
 export interface GroveTarget {
@@ -53,15 +53,12 @@ export function resolveTargetFromRef(ref: string): GroveTarget {
   const [projectName, instanceRef] = parseInstanceRef(ref);
   const project = registry.projects[projectName];
   if (!project) throw unknownProject(projectName, registry.projects);
-  if (/^\d+$/.test(instanceRef) && (Number(instanceRef) < 0 || Number(instanceRef) > 9)) {
-    throw new Error(`specify the instance as project/name (e.g. "northlight/2"), got "${ref}"`);
-  }
   if (instanceRef === "0") {
     return { project, projectName, root: path.resolve(project.source) };
   }
 
   const byName = project.instances.find((instance) => instance.name === instanceRef);
-  const bySlot = /^\d$/.test(instanceRef)
+  const bySlot = /^\d+$/.test(instanceRef)
     ? project.instances.find((instance) => instance.slot === Number(instanceRef))
     : undefined;
   if (byName && bySlot && byName !== bySlot) {
@@ -80,6 +77,9 @@ export function resolveTargetFromRef(ref: string): GroveTarget {
 }
 
 export function assertTargetUsable(target: GroveTarget): void {
+  if (target.instance?.pending === "planting") {
+    throw new Error(plantingError(target.projectName, target.instance));
+  }
   if (target.instance?.needsState) {
     throw new Error(stateNotAppliedError(target.projectName, target.instance));
   }

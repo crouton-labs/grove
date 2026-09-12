@@ -1,7 +1,7 @@
 import path from "path";
 import fs from "fs";
-import { loadRegistry, saveRegistry, nextFreeSlot } from "../registry.js";
-import { computePorts } from "../ports.js";
+import { saveRegistry, withRegistryLock, nextFreeSlot } from "../registry.js";
+import { computePorts, formatSlotCap, maxSlot } from "../ports.js";
 import { regenerateAliases } from "../aliases.js";
 import { GROVE_CONFIG_FILE, loadRepoConfig } from "../config.js";
 import { expandTilde } from "../paths.js";
@@ -16,7 +16,7 @@ export async function adopt(
   instancePath: string,
   options: AdoptOptions,
 ) {
-  const registry = loadRegistry();
+  await withRegistryLock((registry) => {
   const proj = registry.projects[project];
   if (!proj) {
     const available = Object.keys(registry.projects);
@@ -30,15 +30,15 @@ export async function adopt(
   const usedSlots = new Set(proj.instances.map((instance) => instance.slot));
   let slot: number;
   if (options.slot) {
-    slot = parseInt(options.slot, 10);
-    if (isNaN(slot) || slot < 1 || slot > 9) {
-      console.error("Error: slot must be 1-9.");
+    slot = Number(options.slot);
+    if (!/^[1-9]\d*$/.test(options.slot) || slot > maxSlot(proj.ports)) {
+      console.error(`Error: slot must be between 1 and ${formatSlotCap(maxSlot(proj.ports))}.`);
       process.exit(1);
     }
   } else {
     slot = detectSlotFromEnv(absPath, proj.ports) ?? nextFreeSlot(usedSlots);
-    if (slot > 9) {
-      console.error("Error: no free slots (1-9).");
+    if (slot > maxSlot(proj.ports)) {
+      console.error(`Error: no free slots (cap ${formatSlotCap(maxSlot(proj.ports))}).`);
       process.exit(1);
     }
   }
@@ -90,6 +90,7 @@ export async function adopt(
     console.log("  Ports:");
     for (const [svc, port] of Object.entries(ports)) console.log(`    ${svc}: ${port}`);
   }
+  });
 }
 
 function detectSlotFromEnv(
@@ -107,7 +108,7 @@ function detectSlotFromEnv(
       const remainder = foundPort - def.base;
       if (remainder > 0 && remainder % def.offset === 0) {
         const slot = remainder / def.offset;
-        if (slot >= 1 && slot <= 9) {
+        if (slot >= 1) {
           console.log(`  Detected slot ${slot} from PORT=${foundPort} in ${rel}`);
           return slot;
         }

@@ -90,6 +90,13 @@ export function stateNotAppliedError(
   );
 }
 
+export function plantingError(projectName: string, instance: GroveInstance): string {
+  return (
+    `${projectName}/${instance.name} is still planting and cannot be used. ` +
+    `Remove it with: grove uproot ${projectName}/${instance.name}`
+  );
+}
+
 /** Context for a registered instance, by name. Throws with the instance list when unknown. */
 export function instanceContext(
   project: GroveProjectConfig,

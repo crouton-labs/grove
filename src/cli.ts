@@ -59,17 +59,17 @@ Machine registration
 
 Setup creates a missing registration, preserves an exact one, and only reconciles a registration that already matches the lifecycle contract but lacks its ${GROVE_CONFIG_FILE} pointer. A different source, config path, ports, aliases, teardown script, or legacy init script is consequential; use \`register --update\` explicitly.
 
-Setup refuses a planted instance and names its source root. It finishes with the same health validation as \`grove doctor\` and reports Repository, Machine, and Health separately.`;
+Setup refuses a planted instance and names its source root. It prints the port-derived slot cap, finishes with the same health validation as \`grove doctor\`, and reports Repository, Machine, and Health separately.`;
 
 program
   .command("setup [path]")
-  .description("Validate a source repository and register it on this machine")
+  .description("Validate a source repository, register it, and print its slot cap")
   .addHelpText("after", `\n${SETUP_HELP}\n`)
   .action(setup);
 
 program
   .command("register <path>")
-  .description("Register a project source directory")
+  .description("Register a project source directory and print its slot cap")
   .option("--name <name>", "Project name (defaults to dir basename)")
   .option("--init <script>", "Init script path (relative to project root)")
   .option(
@@ -105,15 +105,19 @@ const REF_GRAMMAR = `A state ref is one of:
 All three are driven by the project's own \`stateCommand\`; a project without
 one has no state layer and plants exactly as before.`;
 
+const SLOT_CAP_GRAMMAR = `Slots are numbered from 1. Grove derives each project's cap from its declared ports: every port for slots 0 through the cap must be distinct and at most 65535. \`grove register\` and \`grove setup\` print the cap; \`grove plant\` refuses a requested slot above it.
+
+Plant reserves its registry entry as \`planting\` before copying files. An interrupted plant remains visible and can only be removed with \`grove uproot <project/name>\`.`;
+
 program
   .command("plant <project> [name]")
-  .description("Create a new project instance (name defaults to the slot number)")
+  .description("Reserve a slot, then create a new project instance")
   .option("--slot <n>", "Slot number (auto-assigned if omitted)")
   .option("--path <path>", "Custom target path (default: sibling to source)")
   .option("--code-from <mode>", "Code to start from: configured | @source (default: configured)")
   .option("--from <ref>", "State to start from (default: baseline)")
   .option("--ignore-fingerprint", "Restore even when the captured schema differs")
-  .addHelpText("after", `\n${CODE_GRAMMAR}\n\n${REF_GRAMMAR}\n`)
+  .addHelpText("after", `\n${CODE_GRAMMAR}\n\n${REF_GRAMMAR}\n\n${SLOT_CAP_GRAMMAR}\n`)
   .action(plant);
 
 program
@@ -138,13 +142,13 @@ program
 
 program
   .command("uproot <project/name>")
-  .description("Tear down an instance and remove from registry")
+  .description("Tear down an instance, including a partial planting, and remove it from registry")
   .option("--force", "Skip confirmation prompt")
   .action(uproot);
 
 program
   .command("list [project]")
-  .description("List instances, git state, and port health")
+  .description("List instances, including planting state, git state, and port health")
   .option("--json", "Print machine-readable inventory")
   .action((project: string | undefined, options: { json?: boolean }) => list(project, options));
 
@@ -167,12 +171,12 @@ program
 
 program
   .command("ui [project]")
-  .description("Full-screen slot table: branch, sync, dirty, live services, and the lifecycle keys")
+  .description("Full-screen slot table through the project's computed slot cap")
   .action((project: string | undefined) => ui(project));
 
 program
   .command("doctor [project]")
-  .description("Validate registry, prune zombie instances")
+  .description("Validate registry, report planting instances, and prune zombies")
   .action(doctor);
 
 // `dev` is a raw forwarding boundary: Commander must never parse its tail.

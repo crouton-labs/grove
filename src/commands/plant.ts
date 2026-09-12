@@ -1,8 +1,10 @@
 import path from "path";
 import fs from "fs";
 import { execSync } from "child_process";
-import { loadRegistry, saveRegistry, nextFreeSlot } from "../registry.js";
-import { computePorts } from "../ports.js";
+import { randomUUID } from "crypto";
+import { isDeepStrictEqual } from "node:util";
+import { loadRegistry, saveRegistry, withRegistryLock, nextFreeSlot } from "../registry.js";
+import { computePorts, formatSlotCap, maxSlot } from "../ports.js";
 import {
   GROVE_CONFIG_FILE,
   loadRepoConfig,
@@ -59,7 +61,7 @@ export async function plant(
   }
 
   const registry = loadRegistry();
-  const proj = registry.projects[project];
+  let proj = registry.projects[project];
 
   if (!proj) {
     const available = Object.keys(registry.projects);
@@ -83,79 +85,19 @@ export async function plant(
     console.error(`Error: ${project} declares nameIsSlot; its instance path is derived from the slot (<instancesDir>/<slot>). Remove --path.`);
     process.exit(1);
   }
-  if (repoConfig?.nameIsSlot && name !== undefined && ((!/^[1-9]$/.test(name)) || (options.slot !== undefined && name !== String(Number(options.slot))))) {
-    console.error(`Error: ${project} declares nameIsSlot; its instances are named by slot number. Drop the name: grove plant ${project} [--slot N].`);
+  if (repoConfig?.nameIsSlot && name !== undefined && !/^[1-9]\d*$/.test(name)) {
+    console.error(`Error: ${project} declares nameIsSlot; its instances are named by a positive slot number. Drop the name: grove plant ${project} [--slot N].`);
     process.exit(1);
   }
 
-  // Slot assignment
-  const usedSlots = new Set(proj.instances.map((i) => i.slot));
-  let slot: number;
-  if (options.slot) {
-    slot = parseInt(options.slot, 10);
-    if (isNaN(slot) || slot < 1 || slot > 9) {
-      console.error("Error: slot must be 1-9.");
-      process.exit(1);
-    }
-    if (usedSlots.has(slot)) {
-      console.error(`Error: slot ${slot} already in use by another instance.`);
-      process.exit(1);
-    }
-  } else {
-    slot = nextFreeSlot(usedSlots);
-    if (slot > 9) {
-      console.error("Error: no free slots (1-9).");
-      process.exit(1);
-    }
-  }
-
-  // Name defaults to the slot number, so `grove plant <project>` yields 1, 2, 3, ...
-  name = name ?? String(slot);
-
-  if (repoConfig?.nameIsSlot && name !== String(slot)) {
-    console.error(`Error: ${project} declares nameIsSlot; its instances are named by slot number. Drop the name: grove plant ${project} [--slot N].`);
-    process.exit(1);
-  }
-
-  if (proj.instances.find((i) => i.name === name)) {
-    console.error(
-      `Error: instance "${name}" already exists for project "${project}".`,
-    );
-    process.exit(1);
-  }
-
-  // Target path — under config.instancesDir if set (resolved relative to source,
-  // with ~ expansion), otherwise a sibling of the source. An explicit --path always wins.
+  // Target path is finalized while the registry lock is held, after its slot is reserved.
   const baseDir = repoConfig?.instancesDir
     ? path.resolve(proj.source, expandTilde(repoConfig.instancesDir))
     : path.dirname(proj.source);
-  const targetPath = options.path
-    ? path.resolve(options.path)
-    : path.join(baseDir, name);
-
-  const ports = computePorts(proj.ports, slot);
+  let slot: number;
+  let targetPath: string;
+  let ports: Record<string, number>;
   let contextEnv: NodeJS.ProcessEnv;
-  try {
-    contextEnv = groveContextEnv({
-      source: proj.source,
-      target: targetPath,
-      slot,
-      instanceName: name,
-      ports,
-    });
-  } catch (error) {
-    console.error(`Error: ${(error as Error).message}`);
-    process.exit(1);
-  }
-
-  if (!options.path) {
-    fs.mkdirSync(baseDir, { recursive: true });
-  }
-
-  if (fs.existsSync(targetPath)) {
-    console.error(`Error: target already exists: ${targetPath}`);
-    process.exit(1);
-  }
 
   // Resolve the state ref before any filesystem work: a typo should fail in a
   // second, not after a full clone-and-install.
@@ -166,7 +108,8 @@ export async function plant(
     console.error(`Error: ${(error as Error).message}`);
     process.exit(1);
   }
-  if (options.from && !hasStateCommand(proj, sourceContext(proj, project))) {
+  const stateConfigured = hasStateCommand(proj, sourceContext(proj, project));
+  if (options.from && !stateConfigured) {
     console.error(
       `Error: --from ${options.from} was given but ${configFile} has no stateCommand.`,
     );
@@ -190,6 +133,100 @@ export async function plant(
       process.exit(1);
     }
   }
+
+  const pendingRef = stateConfigured && stateRef ? (options.from ?? BASELINE_REF) : undefined;
+  const reservationId = randomUUID();
+  let reservation: { project: NonNullable<typeof proj>; name: string; slot: number; path: string };
+  try {
+  reservation = await withRegistryLock((currentRegistry) => {
+    const currentProject = currentRegistry.projects[project];
+    if (!currentProject) {
+      throw new Error(`project "${project}" is no longer registered`);
+    }
+    if (
+      currentProject.source !== proj.source ||
+      currentProject.configFile !== proj.configFile ||
+      currentProject.initScript !== proj.initScript ||
+      !isDeepStrictEqual(currentProject.ports, proj.ports)
+    ) {
+      throw new Error(`project "${project}" changed while plant was preparing; rerun the command`);
+    }
+    const cap = maxSlot(currentProject.ports);
+    if (cap < 1) {
+      throw new Error(`${project} has no usable instance slots (cap ${formatSlotCap(cap)})`);
+    }
+
+    const usedSlots = new Set(currentProject.instances.map((instance) => instance.slot));
+    let reservedSlot: number;
+    if (options.slot !== undefined) {
+      if (!/^[1-9]\d*$/.test(options.slot)) {
+        throw new Error("slot must be a positive integer");
+      }
+      reservedSlot = Number(options.slot);
+      if (reservedSlot > cap) {
+        throw new Error(`slot ${reservedSlot} exceeds the project slot cap (${formatSlotCap(cap)})`);
+      }
+      if (usedSlots.has(reservedSlot)) {
+        throw new Error(`slot ${reservedSlot} already in use by another instance`);
+      }
+    } else {
+      reservedSlot = nextFreeSlot(usedSlots);
+      if (reservedSlot > cap) {
+        throw new Error(`no free slots (cap ${formatSlotCap(cap)})`);
+      }
+    }
+
+    const instanceName = name ?? String(reservedSlot);
+    if (repoConfig?.nameIsSlot && instanceName !== String(reservedSlot)) {
+      throw new Error(`${project} declares nameIsSlot; its instances are named by slot number. Drop the name: grove plant ${project} [--slot N]`);
+    }
+    if (currentProject.instances.some((instance) => instance.name === instanceName)) {
+      throw new Error(`instance "${instanceName}" already exists for project "${project}"`);
+    }
+
+    const reservedPath = options.path
+      ? path.resolve(options.path)
+      : path.join(baseDir, instanceName);
+    if (fs.existsSync(reservedPath)) {
+      throw new Error(`target already exists: ${reservedPath}`);
+    }
+
+    const instance: GroveInstance = {
+      name: instanceName,
+      path: reservedPath,
+      slot: reservedSlot,
+      created: new Date().toISOString(),
+      pending: "planting",
+      reservationId,
+    };
+    if (pendingRef) instance.needsState = pendingRef;
+    currentProject.instances.push(instance);
+    saveRegistry(currentRegistry);
+    regenerateAliases(currentRegistry);
+    return { project: currentProject, name: instanceName, slot: reservedSlot, path: reservedPath };
+  });
+  } catch (error) {
+    console.error(`Error: ${(error as Error).message}.`);
+    process.exit(1);
+  }
+  proj = reservation.project;
+  name = reservation.name;
+  slot = reservation.slot;
+  targetPath = reservation.path;
+  ports = computePorts(proj.ports, slot);
+  try {
+    contextEnv = groveContextEnv({
+      source: proj.source,
+      target: targetPath,
+      slot,
+      instanceName: name,
+      ports,
+    });
+  } catch (error) {
+    console.error(`Error: ${(error as Error).message}`);
+    process.exit(1);
+  }
+  if (!options.path) fs.mkdirSync(baseDir, { recursive: true });
 
   console.log(`Planting ${project}/${name} (slot ${slot})`);
   console.log(`  Source: ${proj.source}`);
@@ -304,7 +341,8 @@ export async function plant(
     try {
       execSync(`bash "${setupPath}"`, { stdio: "inherit", cwd: targetPath, env: contextEnv });
     } catch {
-      console.error("Warning: setup script failed. Instance will be registered but may need manual setup.");
+      console.error(`Error: setup script failed. Remove the partial planting with: grove uproot ${project}/${name}`);
+      process.exit(1);
     }
   }
 
@@ -321,31 +359,6 @@ export async function plant(
     instanceName: name,
     ports,
   };
-  const stateConfigured = hasStateCommand(proj, stateContext);
-  const pendingRef =
-    stateConfigured && stateRef ? (options.from ?? BASELINE_REF) : undefined;
-
-  // Register before state runs: the checkout took minutes to build, so a
-  // fingerprint refusal or an interrupted restore must leave a named instance
-  // `grove restore` can repair and `grove uproot` can remove — not an orphan
-  // directory. needsState is what marks it unusable until state lands.
-  const instance: GroveInstance = {
-    name,
-    path: targetPath,
-    slot,
-    created: new Date().toISOString(),
-  };
-  if (pendingRef) instance.needsState = pendingRef;
-  proj.instances.push(instance);
-  saveRegistry(registry);
-  regenerateAliases(registry);
-
-  if (!stateConfigured && options.from) {
-    console.error(
-      `Error: --from ${options.from} was given but ${configFile} has no stateCommand in the planted checkout.`,
-    );
-    process.exit(1);
-  }
   if (stateConfigured && stateRef) {
     console.log(`Applying state: ${describeRef(stateRef)}`);
     try {
@@ -353,13 +366,27 @@ export async function plant(
     } catch (error) {
       console.error(`Error: ${(error as Error).message}`);
       console.error("");
-      console.error(`${project}/${name} is registered but its state was not applied.`);
-      console.error(`  Repair: grove restore ${project}/${name} ${pendingRef}`);
+      console.error(`${project}/${name} is still planting and cannot be used.`);
       console.error(`  Remove: grove uproot ${project}/${name}`);
       process.exit(1);
     }
-    delete instance.needsState;
-    saveRegistry(registry);
+  }
+
+  try {
+    await withRegistryLock((currentRegistry) => {
+      const instance = currentRegistry.projects[project]?.instances.find(
+        (candidate) => candidate.name === name && candidate.slot === slot && candidate.reservationId === reservationId,
+      );
+      if (!instance) throw new Error(`${project}/${name} is no longer registered`);
+      delete instance.pending;
+      delete instance.reservationId;
+      delete instance.needsState;
+      saveRegistry(currentRegistry);
+      regenerateAliases(currentRegistry);
+    });
+  } catch (error) {
+    console.error(`Error: ${(error as Error).message}`);
+    process.exit(1);
   }
 
   // Structured output for automation

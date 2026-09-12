@@ -10,7 +10,8 @@ import {
   resolveStateCommand,
 } from "../config.js";
 import { doctor } from "./doctor.js";
-import { loadRegistry, saveRegistry } from "../registry.js";
+import { saveRegistry, withRegistryLock } from "../registry.js";
+import { formatSlotCap, maxSlot } from "../ports.js";
 import type { GroveProjectConfig } from "../types.js";
 
 type MachineStatus = "registered" | "preserved" | "reconciled";
@@ -19,19 +20,22 @@ type MachineStatus = "registered" | "preserved" | "reconciled";
 export async function setup(projectPath?: string): Promise<void> {
   try {
     const source = resolveSourcePath(projectPath);
-    const registry = loadRegistry();
-    refuseInstancePath(source, registry.projects);
-
     const config = loadRequiredConfig(source);
     validateConfiguredCommands(source, config.devCommand, config.stateCommand);
 
     const name = config.name || path.basename(source);
-    const machine = reconcileRegistration(registry.projects, name, source, config);
-    if (machine !== "preserved") saveRegistry(registry);
-    regenerateAliases(registry);
+    const slotCap = maxSlot(config.ports);
+    const machine = await withRegistryLock((registry) => {
+      refuseInstancePath(source, registry.projects);
+      const status = reconcileRegistration(registry.projects, name, source, config);
+      if (status !== "preserved") saveRegistry(registry);
+      regenerateAliases(registry);
+      return status;
+    });
 
     console.log(`Repository: ready — ${path.join(source, GROVE_CONFIG_FILE)}`);
     console.log(`Machine: ${machine} — ${name}`);
+    console.log(`Slot cap: ${formatSlotCap(slotCap)}`);
     console.log(`Next: grove plant ${name}`);
     console.log("Health:");
     await doctor(name);

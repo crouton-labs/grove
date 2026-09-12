@@ -1,5 +1,5 @@
 import fs from "fs";
-import { loadRegistry, saveRegistry } from "../registry.js";
+import { loadRegistry, saveRegistry, withRegistryLock } from "../registry.js";
 import { computePorts } from "../ports.js";
 import { stopInstanceServices } from "../process.js";
 import {
@@ -15,6 +15,7 @@ export async function doctor(project?: string) {
   const registry = loadRegistry();
   let totalFixed = 0;
   let failures = 0;
+  const zombies: Array<{ project: string; name: string }> = [];
 
   if (!checkSettings()) failures++;
 
@@ -42,10 +43,15 @@ export async function doctor(project?: string) {
       if (!reportCommands(proj, proj.source, "source")) failures++;
     }
 
-    const zombieIdxs: number[] = [];
-    for (let i = 0; i < proj.instances.length; i++) {
-      const inst = proj.instances[i];
-      if (fs.existsSync(inst.path)) {
+    for (const inst of proj.instances) {
+      const exists = fs.existsSync(inst.path);
+      if (inst.pending === "planting") {
+        console.log(`  \x1b[33m⚠\x1b[0m ${inst.name} → ${inst.path} (planting${exists ? "" : "; directory missing"})`);
+        console.log(`    Remove it with: grove uproot ${name}/${inst.name}`);
+        failures++;
+        continue;
+      }
+      if (exists) {
         console.log(`  \x1b[32m✓\x1b[0m ${inst.name} → ${inst.path}`);
         if (inst.needsState) {
           console.log(
@@ -54,38 +60,43 @@ export async function doctor(project?: string) {
           failures++;
         }
         if (!reportCommands(proj, inst.path, inst.name)) failures++;
+        continue;
+      }
+
+      console.log(`  \x1b[31m✗\x1b[0m ${inst.name} → ${inst.path} (zombie)`);
+      const ports = computePorts(proj.ports, inst.slot);
+      console.log("    Stopping zombie services...");
+      const { killed } = await stopInstanceServices(inst.path, ports);
+      if (killed > 0) {
+        console.log(`    Killed ${killed} zombie process${killed > 1 ? "es" : ""}.`);
       } else {
-        console.log(
-          `  \x1b[31m✗\x1b[0m ${inst.name} → ${inst.path} (zombie)`,
-        );
-
-        // Kill any services still running for this zombie instance
-        const ports = computePorts(proj.ports, inst.slot);
-        console.log(`    Stopping zombie services...`);
-        const { killed } = await stopInstanceServices(inst.path, ports);
-        if (killed > 0) {
-          console.log(`    Killed ${killed} zombie process${killed > 1 ? "es" : ""}.`);
-        } else {
-          console.log(`    No running services.`);
-        }
-
-        zombieIdxs.push(i);
+        console.log("    No running services.");
       }
-    }
-
-    if (zombieIdxs.length) {
-      for (const idx of zombieIdxs.reverse()) {
-        proj.instances.splice(idx, 1);
-      }
-      totalFixed += zombieIdxs.length;
-      console.log(
-        `  Pruned ${zombieIdxs.length} zombie${zombieIdxs.length > 1 ? "s" : ""}.`,
-      );
+      zombies.push({ project: name, name: inst.name });
     }
   }
 
+  if (zombies.length) {
+    totalFixed = await withRegistryLock((currentRegistry) => {
+      let fixed = 0;
+      for (const zombie of zombies) {
+        const currentProject = currentRegistry.projects[zombie.project];
+        const index = currentProject?.instances.findIndex((instance) =>
+          instance.name === zombie.name &&
+          instance.pending !== "planting" &&
+          !fs.existsSync(instance.path),
+        ) ?? -1;
+        if (!currentProject || index === -1) continue;
+        currentProject.instances.splice(index, 1);
+        fixed++;
+      }
+      if (fixed > 0) saveRegistry(currentRegistry);
+      return fixed;
+    });
+    if (totalFixed > 0) console.log(`  Pruned ${totalFixed} zombie${totalFixed > 1 ? "s" : ""}.`);
+  }
+
   if (totalFixed > 0) {
-    saveRegistry(registry);
     console.log(`\nFixed ${totalFixed} issue(s).`);
   }
   if (failures > 0) {

@@ -14,11 +14,11 @@ export async function list(project?: string, options: { json?: boolean } = {}): 
     for (const item of inventory.projects) {
       console.log(`\x1b[1m${item.name}\x1b[0m${item.sourceExists ? "" : " \x1b[31m(source missing)\x1b[0m"}`);
       console.log(`  ${item.source}`);
-      renderTarget(item.source_target, true);
+      renderTarget(item.name, item.source_target, true);
       if (item.instances.length === 0) {
         console.log("  (no instances)");
       } else {
-        for (const instance of item.instances) renderTarget(instance, false);
+        for (const instance of item.instances) renderTarget(item.name, instance, false);
       }
       console.log("");
     }
@@ -28,11 +28,13 @@ export async function list(project?: string, options: { json?: boolean } = {}): 
   }
 }
 
-function renderTarget(target: InventoryTarget, source: boolean): void {
+function renderTarget(project: string, target: InventoryTarget, source: boolean): void {
   const label = source ? "(source)" : target.name;
   const status = target.exists ? "\x1b[32m●\x1b[0m" : "\x1b[31m✗\x1b[0m";
   console.log(`  ${status} ${label} \x1b[90m(slot ${target.slot})\x1b[0m ${target.path}`);
-  if (!target.exists) {
+  if (target.pending === "planting") {
+    console.log(`    \x1b[33mplanting\x1b[0m — grove uproot ${project}/${target.name}`);
+  } else if (!target.exists) {
     console.log("    \x1b[31mzombie — directory missing. Run grove doctor\x1b[0m");
     return;
   }
