@@ -4,7 +4,7 @@ import { currentRegisteredTarget } from "../selection.js";
 import { activePendingOperationError, isPendingInstanceOperationActive } from "../state.js";
 import { assertTargetUsable, type GroveTarget } from "../target.js";
 
-export type RevisionOperation = "rolling-out" | "rolling-back";
+export type RevisionOperation = "releasing" | "rolling-out" | "rolling-back";
 
 export interface ReservedRevisionOperation {
   target: GroveTarget;

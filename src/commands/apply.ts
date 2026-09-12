@@ -21,7 +21,7 @@ interface ApplyOptions extends TargetingOptions {
 export interface ApplyTargetOptions {
   force?: boolean;
   /** The rollout or rollback reservation that owns this apply. */
-  pendingOperation?: { pending: "rolling-out" | "rolling-back"; id: string };
+  pendingOperation?: { pending: "releasing" | "rolling-out" | "rolling-back"; id: string };
   rolledBackFrom?: string;
   /** Runs after setup but before this function records the revision. */
   afterSetup?: (target: GroveTarget) => void | Promise<void>;

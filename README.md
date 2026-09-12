@@ -108,6 +108,14 @@ A selector or `--all` walks selected instances sequentially in slot order. Grove
 
 For `restore`, use `grove restore <target> <ref>` for one target and `grove restore [project] <ref> -l ...` or `grove restore [project] <ref> --all` for a set. For `label`, use `grove label [project] key=value ... -l ...` or `grove label [project] key=value ... --all` for a set.
 
+## Warm pool
+
+`grove pool <project>` shows the number of ready instances, their slots, and the number of claimed instances. `grove pool <project> --size N` plants with configured code and baseline state until N completed instances carry `grove.pool=ready`. It only grows; a pool already at or above the requested size is left unchanged.
+
+`grove claim <project> [--label key=value...]` atomically takes the lowest-slot ready instance, removes `grove.pool=ready`, and adds the supplied labels. It prints the same `--- grove-output ---` JSON block as `grove plant`. When no ready instance exists, grow the pool with `grove pool <project> --size N`.
+
+`grove release <project/instance> [--force]` returns a claimed instance to the pool. It refuses tracked changes in every configured repository. `--force` runs `git reset --hard` and `git clean -fd` in every configured repository, then Grove fast-forwards configured branches, resets the data state, applies the project configuration, drops all labels, and sets `grove.pool=ready`. An interruption before the final label update leaves a clean, applied, unlabelled instance; re-run `grove release <target>` to finish it.
+
 ## Rollout and rollback
 
 `grove rollout <project>` moves every planted instance in the project forward in slot order. Use `-l key=value[,key=value]` to select matching labels or `--all` to state the default explicitly. Before touching an instance, rollout refuses if any configured repository has tracked changes. It fetches and fast-forwards every configured repository to its configured branch, runs `apply`, then runs lifecycle `stop` and `start` when both are declared. When lifecycle `status` is declared, it must exit 0. Rollout stops at the first failure, names that instance, and leaves later instances unstarted.
@@ -190,6 +198,9 @@ grove register <source> [--config <relative-path>] [--update]
 grove dev [--at <target>] [raw argv...]
 grove plant <project> [name] [--slot <n>] [--code-from <mode>] [--from <ref>] [--ignore-fingerprint] [--label <key=value>...]
 grove apply [target-or-project] [-l <key=value[,key=value]> | --all] [--force]
+grove pool <project> [--size N]
+grove claim <project> [--label <key=value>...]
+grove release <target> [--force]
 grove rollout <project> [-l <key=value[,key=value]> | --all]
 grove rollback <project/instance>
 grove adopt <project> <name> <path> [--slot <n>]
@@ -216,6 +227,6 @@ Teardown alone also receives `GROVE_SIBLINGS_JSON`: a JSON array of the project 
 
 `grove plant` prints a `--- grove-output ---` JSON block for callers that need the created path, slot, ports, state ref, the branch and commit each repo landed on, and the recorded `spec` and `applied` intent.
 
-`grove plant`, `grove uproot`, `grove apply`, and `grove restore` mark their in-progress instance `planting`, `uprooting`, `applying`, or `restoring` before long work and release the registry lock while that work runs. `grove list`, `grove doctor`, and `grove ui` show the state and its resolving command. `grove dev`, lifecycle commands, `grove snapshot`, and other conflicting operations refuse an in-progress instance. Remove a partial planting with `grove uproot <project/name> --force`; re-run `grove uproot`, `grove apply`, or `grove restore <project/name> <ref>` to finish an interrupted operation of that type. `grove uproot` refuses an instance being applied or restored, but remains the cleanup path for planting and uprooting instances. Once an operation succeeds, Grove clears its marker. An instance whose state was not applied is still marked `state not applied` and can be repaired with `grove restore`.
+`grove plant`, `grove uproot`, `grove apply`, `grove restore`, and `grove release` mark their in-progress instance `planting`, `uprooting`, `applying`, `restoring`, or `releasing` before long work and release the registry lock while that work runs. `grove list`, `grove doctor`, and `grove ui` show the state and its resolving command. `grove dev`, lifecycle commands, `grove snapshot`, and other conflicting operations refuse an in-progress instance. Remove a partial planting with `grove uproot <project/name> --force`; re-run `grove uproot`, `grove apply`, `grove restore <project/name> <ref>`, or `grove release <project/name>` to finish an interrupted operation of that type. `grove uproot` refuses an instance being applied or restored, but remains the cleanup path for planting and uprooting instances. Once an operation succeeds, Grove clears its marker. An instance whose state was not applied is still marked `state not applied` and can be repaired with `grove restore`.
 
 Grove does not infer a moved config path. Re-run `grove register <source> --config <relative-path> --update`; config-backed re-registration replaces stored ports, aliases, init, teardown, and development-command values.

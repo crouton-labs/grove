@@ -46,13 +46,22 @@ export function assertConfiguredRepositoriesClean(repositories: readonly Configu
 }
 
 /** Fetch and fast-forward every repository to its configured branch. */
-export function fastForwardConfiguredRepositories(repositories: readonly ConfiguredRepository[]): void {
+export function fastForwardConfiguredRepositories(repositories: readonly ConfiguredRepository[], operation = "roll out"): void {
   for (const repository of repositories) {
     console.log(`  Fetching ${repository.name}...`);
-    runGit(repository.path, ["fetch", "--quiet"], repository.name, "roll out");
+    runGit(repository.path, ["fetch", "--quiet"], repository.name, operation);
     console.log(`  Fast-forwarding ${repository.name} to ${repository.branch}...`);
-    runGit(repository.path, ["checkout", "--quiet", repository.branch], repository.name, "roll out");
-    runGit(repository.path, ["merge", "--ff-only", `origin/${repository.branch}`], repository.name, "roll out");
+    runGit(repository.path, ["checkout", "--quiet", repository.branch], repository.name, operation);
+    runGit(repository.path, ["merge", "--ff-only", `origin/${repository.branch}`], repository.name, operation);
+  }
+}
+
+/** Discard every configured repository's worktree changes before replacing its code. */
+export function discardConfiguredRepositoryChanges(repositories: readonly ConfiguredRepository[], operation: string): void {
+  for (const repository of repositories) {
+    console.log(`  Discarding changes in ${repository.name}...`);
+    runGit(repository.path, ["reset", "--hard"], repository.name, operation);
+    runGit(repository.path, ["clean", "-fd"], repository.name, operation);
   }
 }
 

@@ -32,7 +32,7 @@ export interface InventoryTarget {
   exists: boolean;
   created: string | null;
   needsState: string | null;
-  pending: "planting" | "uprooting" | "applying" | "restoring" | "rolling-out" | "rolling-back" | null;
+  pending: "planting" | "uprooting" | "applying" | "restoring" | "releasing" | "rolling-out" | "rolling-back" | null;
   pendingOperation: GrovePendingOperation | null;
   spec: GroveInstanceSpec | null;
   applied: GroveApplied | null;

@@ -1,6 +1,6 @@
 import { saveRegistry, withRegistryLock } from "../registry.js";
 import { assertLabelKey, currentRegisteredTarget, parseLabelAssignments, runSequential, selectTargets, type TargetingOptions } from "../selection.js";
-import type { GroveTarget } from "../target.js";
+import { assertTargetUsable, type GroveTarget } from "../target.js";
 
 interface LabelOptions extends TargetingOptions {
   rm?: string[];
@@ -45,9 +45,12 @@ export async function labelTarget(
   if (!target.instance) {
     throw new Error(`${target.projectName} is the project source; labels apply only to planted instances`);
   }
+  assertTargetUsable(target);
   const { projectName, instance } = target;
   await withRegistryLock(async (registry) => {
-    const current = currentRegisteredTarget(registry, target).instance!;
+    const registered = currentRegisteredTarget(registry, target);
+    assertTargetUsable(registered);
+    const current = registered.instance!;
     Object.assign(current.spec.labels, assignments);
     for (const key of remove) delete current.spec.labels[key];
     await saveRegistry(registry);

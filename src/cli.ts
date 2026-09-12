@@ -25,6 +25,9 @@ import { status } from "./commands/status.js";
 import { reset } from "./commands/reset.js";
 import { label } from "./commands/label.js";
 import { ui } from "./commands/ui.js";
+import { pool } from "./commands/pool.js";
+import { claim } from "./commands/claim.js";
+import { release } from "./commands/release.js";
 import { noticeIfUpdateAvailable } from "./update-notice.js";
 import { SECRET_ENV_HELP } from "./env.js";
 
@@ -132,6 +135,27 @@ program
   .option("--label <key=value>", "Instance label; repeatable (key: [a-z0-9._-]+)", collectString, [])
   .addHelpText("after", `\n${CODE_GRAMMAR}\n\n${REF_GRAMMAR}\n\n${SLOT_CAP_GRAMMAR}\n`)
   .action(plant);
+
+program
+  .command("pool <project>")
+  .description("Show or grow a project's ready instance pool")
+  .option("--size <n>", "Plant until this many ready instances exist")
+  .addHelpText("after", "\nWithout --size, pool prints the ready count and slots plus the number of claimed instances. With --size, it only grows: when the requested count is already ready, it does nothing and never uproots instances. New pool instances use configured code, baseline state, and grove.pool=ready.\n")
+  .action(pool);
+
+program
+  .command("claim <project>")
+  .description("Atomically take the lowest-slot ready instance from a project's pool")
+  .option("--label <key=value>", "Label for the claimed instance; repeatable", collectString, [])
+  .addHelpText("after", "\nClaim removes grove.pool=ready and adds each --label in one registry update, so concurrent claims cannot take the same instance. It prints the same --- grove-output --- JSON block as grove plant. When the pool is empty, grow it first with grove pool <project> --size N.\n")
+  .action(claim);
+
+program
+  .command("release <target>")
+  .description("Return one instance to its configured code, baseline state, and ready pool")
+  .option("--force", "Discard tracked and untracked repository changes before release")
+  .addHelpText("after", "\nRelease refuses tracked changes in configured repositories. --force runs git reset --hard and git clean -fd in every configured repository, then fast-forwards configured branches, resets data state, applies the project configuration, drops all labels, and sets grove.pool=ready. If interrupted before the final label update, re-run grove release <target> to finish it.\n")
+  .action(release);
 
 program
   .command("apply [target-or-project]")

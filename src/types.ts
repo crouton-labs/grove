@@ -37,7 +37,7 @@ export interface GroveInstance {
    */
   needsState?: string;
   /** Present while an operation has reserved this instance's slot. */
-  pending?: "planting" | "uprooting" | "applying" | "restoring" | "rolling-out" | "rolling-back";
+  pending?: "planting" | "uprooting" | "applying" | "restoring" | "releasing" | "rolling-out" | "rolling-back";
   /** Identifies the specific plant attempt that owns a pending reservation. */
   reservationId?: string;
   /** Identifies the process and restore request that own an apply or restore reservation. */

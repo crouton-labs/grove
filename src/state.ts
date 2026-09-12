@@ -110,6 +110,12 @@ export function pendingError(projectName: string, instance: GroveInstance): stri
       `Re-run grove restore ${projectName}/${instance.name} <ref> if restore was interrupted`
     );
   }
+  if (instance.pending === "releasing") {
+    return (
+      `${projectName}/${instance.name} is being released and cannot be used. ` +
+      `Re-run grove release ${projectName}/${instance.name} if release was interrupted`
+    );
+  }
   if (instance.pending === "rolling-out") {
     return (
       `${projectName}/${instance.name} is being rolled out and cannot be used. ` +
@@ -137,6 +143,7 @@ export function pendingResolution(projectName: string, instance: {
   if (instance.pending === "planting") return `Remove with: grove uproot ${shellArgument(target)}`;
   if (instance.pending === "uprooting") return `Re-run with: grove uproot ${shellArgument(target)}`;
   if (instance.pending === "applying") return `Re-run with: grove apply ${shellArgument(target)}`;
+  if (instance.pending === "releasing") return `Re-run with: grove release ${shellArgument(target)}`;
   if (instance.pending === "rolling-out") return `Re-run with: grove rollout ${shellArgument(projectName)} --all`;
   if (instance.pending === "rolling-back") return `Re-run with: grove rollback ${shellArgument(target)}`;
   const restore = instance.pendingOperation?.restore;

@@ -37,6 +37,7 @@ import {
 import { recordApplied, type GroveApplied, type GroveInstance } from "../types.js";
 import { configHash } from "../intent.js";
 import { parseLabelAssignments } from "../selection.js";
+import { printGroveOutput } from "../plant-output.js";
 
 interface PlantOptions {
   slot?: string;
@@ -406,6 +407,5 @@ export async function plant(
   console.log("");
   console.log(`Planted: ${project}/${name}`);
   console.log("");
-  console.log("--- grove-output ---");
-  console.log(JSON.stringify(summary, null, 2));
+  printGroveOutput(summary);
 }
