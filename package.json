@@ -1,7 +1,7 @@
 {
   "name": "@crouton-kit/grove",
   "version": "0.2.31",
-  "description": "Parallel project instance manager — plant, adopt, uproot, and monitor isolated copies of your codebase",
+  "description": "Parallel project instance manager for declarative apply, labels, ready pools, rollout, and rollback",
   "type": "module",
   "bin": {
     "grove": "dist/cli.js"

@@ -14,6 +14,7 @@ import { inspectScopedEnv } from "../env.js";
 import { instanceContext, pendingResolution, sourceContext } from "../state.js";
 import type { GroveExecutionContext } from "../context.js";
 import { currentApplied, type GroveProjectConfig } from "../types.js";
+import { isPoolReady } from "./pool.js";
 
 export async function doctor(project?: string) {
   const registry = loadRegistry();
@@ -39,6 +40,8 @@ export async function doctor(project?: string) {
     }
 
     console.log(`Checking ${name}...`);
+    const poolReady = proj.instances.filter(isPoolReady).length;
+    console.log(`  Pool: ${poolReady} ready, ${proj.instances.length - poolReady} claimed`);
     if (!reportEnvFiles(sourceContext(proj, name), "source")) failures++;
     let sourceConfigHash: string | undefined;
 
@@ -77,6 +80,10 @@ export async function doctor(project?: string) {
           failures++;
         }
         if (!reportCommands(proj, inst.path, inst.name)) failures++;
+        console.log(`    intent: code ${inst.spec.codeFrom}; state ${inst.spec.from}; pool ${isPoolReady(inst) ? "claimable" : "not claimable"}`);
+        if (applied) {
+          console.log(`    applied: ${applied.configHash.slice(0, 8)} at ${applied.at}; ${inst.history.length} revision${inst.history.length === 1 ? "" : "s"}`);
+        }
         continue;
       }
 

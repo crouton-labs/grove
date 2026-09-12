@@ -7,6 +7,7 @@ import { computePorts, checkPort, maxSlot } from "./ports.js";
 import { loadRegistry } from "./registry.js";
 import { targetSlot, type GroveTarget } from "./target.js";
 import { tmuxSessionName } from "./tmux.js";
+import { isPoolReady } from "./commands/pool.js";
 import { currentApplied, type GroveApplied, type GroveInstanceSpec, type GrovePendingOperation } from "./types.js";
 
 export interface InventoryPort {
@@ -45,6 +46,11 @@ export interface InventoryTarget {
   repos: InventoryRepo[];
 }
 
+export interface InventoryPool {
+  ready: number;
+  claimed: number;
+}
+
 export interface InventoryProject {
   name: string;
   source: string;
@@ -53,6 +59,7 @@ export interface InventoryProject {
   nameIsSlot: boolean;
   /** null means declared ports place no upper bound on slots. */
   maxSlot: number | null;
+  pool: InventoryPool;
   source_target: InventoryTarget;
   instances: InventoryTarget[];
 }
@@ -87,6 +94,10 @@ export async function gatherInventory(projectName?: string): Promise<GroveInvent
       sourceExists,
       nameIsSlot: sourceConfig?.nameIsSlot ?? false,
       maxSlot: Number.isFinite(projectMaxSlot) ? projectMaxSlot : null,
+      pool: {
+        ready: instanceTargets.filter(isPoolReady).length,
+        claimed: instanceTargets.filter((instance) => !isPoolReady(instance)).length,
+      },
       source_target,
       instances: instanceTargets,
     };
