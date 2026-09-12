@@ -1,14 +1,20 @@
 import path from "path";
 import fs from "fs";
 import { execSync } from "child_process";
-import { PortDef } from "./types.js";
+import { PortDef, type GroveApplied } from "./types.js";
 import {
   CopyFromSourceSpec,
   InstallSpec,
   RepoSpec,
   SubstitutionSpec,
   GROVE_CONFIG_FILE,
+  hasSetupScript,
+  resolveProjectPath,
+  setupFileForConfig,
+  type GroveRepoConfig,
 } from "./config.js";
+import { groveContextEnv, type GroveExecutionContext } from "./context.js";
+import type { GroveSettings } from "./settings.js";
 
 // ---------------------------------------------------------------------------
 // Glob matching (minimal, no dependencies)
@@ -105,6 +111,7 @@ function copyRecursive(src: string, dest: string, target: string): void {
       }
     } else if (realStat.isFile()) {
       fs.copyFileSync(src, dest);
+      console.log(`  Rewrote ${path.relative(target, dest)}`);
     }
     return;
   }
@@ -119,6 +126,7 @@ function copyRecursive(src: string, dest: string, target: string): void {
 
   if (lstat.isFile()) {
     fs.copyFileSync(src, dest);
+    console.log(`  Rewrote ${path.relative(target, dest)}`);
   }
 }
 
@@ -312,6 +320,19 @@ export function describeClonedRepos(
   return described;
 }
 
+/** Read the code an instance actually holds for its applied intent. */
+export function describeAppliedCode(
+  target: string,
+  repos: Record<string, RepoSpec> | undefined,
+): GroveApplied["code"] {
+  if (!repos) return null;
+  const code: NonNullable<GroveApplied["code"]> = {};
+  for (const [repo, description] of Object.entries(describeClonedRepos(target, repos))) {
+    code[repo] = { branch: description.branch, commit: description.sha };
+  }
+  return code;
+}
+
 export function cloneRepos(
   source: string,
   target: string,
@@ -384,19 +405,23 @@ export function copyFromSource(
       copyRecursive(src, dest, target);
     } else {
       fs.copyFileSync(src, dest);
+      console.log(`  Rewrote ${path.relative(target, dest)}`);
     }
-    console.log(`  Copied ${spec.from}`);
 
     if (spec.patchPorts) {
       if (stat.isDirectory()) {
         const files = walkDir(dest);
         for (const file of files) {
           if (!isSelectedConfig(target, file, configFile) && !isSlotEnvFile(target, file)) {
-            patchPortsInFile(file, portDefs, slot);
+            if (patchPortsInFile(file, portDefs, slot)) {
+              console.log(`  Rewrote ${path.relative(target, file)}`);
+            }
           }
         }
       } else if (!isSelectedConfig(target, dest, configFile) && !isSlotEnvFile(target, dest)) {
-        patchPortsInFile(dest, portDefs, slot);
+        if (patchPortsInFile(dest, portDefs, slot)) {
+          console.log(`  Rewrote ${path.relative(target, dest)}`);
+        }
       }
     }
   }
@@ -488,6 +513,7 @@ export function patchPorts(
 
     if (patchPortsInFile(absPath, portDefs, slot)) {
       patchedCount++;
+      console.log(`  Rewrote ${rel}`);
     }
   }
 
@@ -547,10 +573,57 @@ export function applySubstitutions(
     if (patched !== content) {
       fs.writeFileSync(absPath, patched, "utf-8");
       patchedCount++;
+      console.log(`  Rewrote ${rel}`);
     }
   }
 
   console.log(`  Substituted in ${patchedCount} file(s)`);
+}
+
+export function applyExistingCheckoutSetup(
+  source: string,
+  target: string,
+  config: GroveRepoConfig | null,
+  portDefs: Record<string, PortDef>,
+  configFile: string,
+  context: GroveExecutionContext,
+  settings: GroveSettings,
+): void {
+  if (config?.copyFromSource) {
+    console.log("Copying files from source...");
+    copyFromSource(source, target, config.copyFromSource, portDefs, context.slot, configFile);
+  }
+
+  if (config?.secrets) {
+    console.log("Materializing secrets...");
+    runSecrets(target, config.secrets, () => groveContextEnv(context, process.env, settings));
+  }
+
+  if (config?.patchPortsIn) {
+    console.log("Patching port references...");
+    patchPorts(target, config.patchPortsIn, portDefs, context.slot, configFile);
+  }
+
+  if (config?.substituteIn) {
+    console.log("Applying per-slot substitutions...");
+    const machine = groveContextEnv(context, process.env, settings).GROVE_MACHINE!;
+    applySubstitutions(target, config.substituteIn, context.slot, machine, configFile);
+  }
+
+  if (config?.install) {
+    console.log("Installing dependencies...");
+    runInstalls(target, config.install, () => groveContextEnv(context, process.env, settings));
+  }
+
+  if (hasSetupScript(source, configFile)) {
+    const setupPath = resolveProjectPath(target, setupFileForConfig(configFile));
+    console.log("Running setup script...");
+    execSync(`bash "${setupPath}"`, {
+      stdio: "inherit",
+      cwd: target,
+      env: groveContextEnv(context, process.env, settings),
+    });
+  }
 }
 
 // ---------------------------------------------------------------------------

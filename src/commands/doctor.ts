@@ -9,6 +9,7 @@ import {
   resolveStateCommand,
 } from "../config.js";
 import { loadSettings } from "../settings.js";
+import { configHash } from "../intent.js";
 import { inspectScopedEnv } from "../env.js";
 import { instanceContext, sourceContext } from "../state.js";
 import type { GroveExecutionContext } from "../context.js";
@@ -39,11 +40,17 @@ export async function doctor(project?: string) {
 
     console.log(`Checking ${name}...`);
     if (!reportEnvFiles(sourceContext(proj, name), "source")) failures++;
+    let sourceConfigHash: string | undefined;
 
     if (!fs.existsSync(proj.source)) {
       console.log(`  \x1b[33m⚠\x1b[0m Source missing: ${proj.source}`);
     } else {
       console.log(`  \x1b[32m✓\x1b[0m Source: ${proj.source}`);
+      try {
+        sourceConfigHash = configHash(loadRepoConfig(proj.source, proj.configFile ?? GROVE_CONFIG_FILE));
+      } catch {
+        // reportCommands below prints the config error with its source path.
+      }
       if (!reportCommands(proj, proj.source, "source")) failures++;
     }
 
@@ -62,6 +69,10 @@ export async function doctor(project?: string) {
           console.log(
             `    \x1b[33m⚠\x1b[0m state not applied — grove restore ${name}/${inst.name} ${inst.needsState}`,
           );
+          failures++;
+        }
+        if (inst.applied && sourceConfigHash !== undefined && inst.applied.configHash !== sourceConfigHash) {
+          console.log(`    \x1b[33m⚠\x1b[0m built from older config — grove apply ${name}/${inst.name}`);
           failures++;
         }
         if (!reportCommands(proj, inst.path, inst.name)) failures++;

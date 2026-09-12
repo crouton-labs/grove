@@ -79,7 +79,14 @@ export async function adopt(
       }
 
       const ports = computePorts(proj.ports, slot);
-      proj.instances.push({ name: instanceName, path: absPath, slot, created: new Date().toISOString() });
+      proj.instances.push({
+        name: instanceName,
+        path: absPath,
+        slot,
+        created: new Date().toISOString(),
+        spec: { codeFrom: "configured", from: "baseline", labels: {} },
+        applied: null,
+      });
       await saveRegistry(registry);
       regenerateAliases(registry);
 

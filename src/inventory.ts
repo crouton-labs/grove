@@ -2,10 +2,12 @@ import { execFile } from "child_process";
 import fs from "fs";
 import path from "path";
 import { loadRepoConfig, type GroveRepoConfig } from "./config.js";
+import { configHash } from "./intent.js";
 import { computePorts, checkPort, maxSlot } from "./ports.js";
 import { loadRegistry } from "./registry.js";
 import { targetSlot, type GroveTarget } from "./target.js";
 import { tmuxSessionName } from "./tmux.js";
+import type { GroveApplied, GroveInstanceSpec } from "./types.js";
 
 export interface InventoryPort {
   name: string;
@@ -31,6 +33,9 @@ export interface InventoryTarget {
   created: string | null;
   needsState: string | null;
   pending: "planting" | null;
+  spec: GroveInstanceSpec | null;
+  applied: GroveApplied | null;
+  configStale: boolean;
   tmuxSession: string;
   lifecycle: string[];
   ports: InventoryPort[];
@@ -62,14 +67,15 @@ export async function gatherInventory(projectName?: string): Promise<GroveInvent
     const sourceExists = fs.existsSync(project.source);
     const sourceConfig = sourceExists ? loadRepoConfig(project.source, project.configFile) : null;
     const lifecycle = Object.keys(sourceConfig?.lifecycle ?? {});
+    const sourceConfigHash = sourceExists ? configHash(sourceConfig) : null;
     const projectMaxSlot = maxSlot(project.ports);
     const sourceTarget: GroveTarget = { project, projectName: name, root: path.resolve(project.source) };
     const instances = [...project.instances]
       .sort((a, b) => a.slot - b.slot)
       .map((instance) => ({ project, projectName: name, root: path.resolve(instance.path), instance }));
     const [source_target, ...instanceTargets] = await Promise.all([
-      gatherTarget(sourceTarget, sourceConfig, lifecycle),
-      ...instances.map((target) => gatherTarget(target, undefined, lifecycle)),
+      gatherTarget(sourceTarget, sourceConfig, lifecycle, sourceConfigHash),
+      ...instances.map((target) => gatherTarget(target, undefined, lifecycle, sourceConfigHash)),
     ]);
     return {
       name,
@@ -89,6 +95,7 @@ async function gatherTarget(
   target: GroveTarget,
   config: GroveRepoConfig | null | undefined,
   lifecycle: string[],
+  sourceConfigHash: string | null,
 ): Promise<InventoryTarget> {
   const exists = fs.existsSync(target.root);
   const targetConfig = config === undefined && exists
@@ -102,6 +109,8 @@ async function gatherTarget(
   })));
   const repos = repoEntries(target.root, targetConfig);
   const repoStates = await Promise.all(repos.map(async (repo) => ({ ...repo, ...(await gitState(repo.path)) })));
+  const instance = target.instance;
+  const applied = instance?.applied ?? null;
   return {
     name: target.instance?.name ?? target.projectName,
     slot: targetSlot(target),
@@ -110,6 +119,9 @@ async function gatherTarget(
     created: target.instance?.created ?? null,
     needsState: target.instance?.needsState ?? null,
     pending: target.instance?.pending ?? null,
+    spec: instance?.spec ?? null,
+    applied,
+    configStale: applied !== null && sourceConfigHash !== null && applied.configHash !== sourceConfigHash,
     tmuxSession: tmuxSessionName(target),
     lifecycle,
     ports: await portChecks,

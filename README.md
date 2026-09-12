@@ -88,6 +88,16 @@ An instance's code and its data state are separate choices. `plant --code-from` 
 
 The two intentional launches are `grove plant <project> onboarding` — configured branches at the baseline state, both defaults — and `grove plant <project> feature --code-from @source --from @source`, the code and data you are working on right now.
 
+## Apply and configuration drift
+
+Every planted instance records its requested `spec` (`codeFrom`, state `from`, and future-facing `labels`) and what Grove last applied: a SHA-256 `configHash`, time, and the branch and commit in each configured repository. The hash is the canonical JSON of the validated source config: object keys are sorted recursively and arrays retain their declared order. Whitespace and object-key order therefore do not make an instance stale.
+
+`grove apply <project/instance>` converges an existing checkout without cloning code or changing data state. It reruns `copyFromSource`, `secrets`, `patchPortsIn`, `substituteIn`, `install`, and `setup.sh`, then records the current validated source config as applied. It refuses the source checkout, a planting instance, and tracked repository changes; pass `--force` only when overwriting tracked changes is intended. Untracked files are not a refusal and `copyFromSource` may overwrite them.
+
+Port patching and substitutions write a file only when its content changes, so a second apply leaves an already-patched file unchanged. Substitution rules should match the source value rather than the replacement value; the replacement is intentionally the per-slot final value.
+
+`grove doctor` reports `built from older config — grove apply <project>/<name>` when the current source config hash differs from the recorded one. `grove list` marks the same instance `stale config`; `grove list --json` includes each instance's `spec`, `applied`, and `configStale` fields.
+
 ## State
 
 Ports, namespaces, and env files are an instance's identity; its database contents are state. `stateCommand` lets a project choose what state a new instance starts from and return a live instance to a known one. Grove owns the store, the ref grammar, and the schema gate; the project owns what its state actually is.
@@ -163,6 +173,7 @@ grove setup [source]
 grove register <source> [--config <relative-path>] [--update]
 grove dev [--at <target>] [raw argv...]
 grove plant <project> [name] [--slot <n>] [--code-from <mode>] [--from <ref>] [--ignore-fingerprint]
+grove apply <project/instance> [--force]
 grove adopt <project> <name> <path> [--slot <n>]
 grove list [project] [--json]
 grove open [target] [--json]
@@ -182,7 +193,7 @@ grove states [project] [--rm <name>]
 
 `grove dev` resolves the current directory to the longest containing registered source or instance, then directly runs that target's configured `devCommand`. Arguments are forwarded unchanged, and Grove supplies `GROVE_MACHINE`, `GROVE_SOURCE`, `GROVE_TARGET`, `GROVE_SLOT`, `GROVE_INSTANCE_NAME`, `GROVE_PORTS_JSON`, and `GROVE_PORT_<NAME>` environment variables.
 
-`grove plant` prints a `--- grove-output ---` JSON block for callers that need the created path, slot, ports, state ref, and the branch and commit each repo landed on.
+`grove plant` prints a `--- grove-output ---` JSON block for callers that need the created path, slot, ports, state ref, the branch and commit each repo landed on, and the recorded `spec` and `applied` intent.
 
 `grove plant` writes a `planting` reservation before it creates or copies files, so concurrent plants get different slots and an interrupted plant remains visible rather than leaving an untracked directory. `grove list`, `grove doctor`, and `grove ui` mark that entry `planting`; `grove dev`, lifecycle commands, `grove snapshot`, and `grove restore` refuse it. Remove a partial planting with `grove uproot <project/name> --force`. Once planting succeeds, Grove clears the marker. An instance whose state was not applied is still marked `state not applied` and can be repaired with `grove restore`.
 

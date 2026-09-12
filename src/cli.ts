@@ -8,6 +8,7 @@ import { setup } from "./commands/setup.js";
 import { GROVE_CONFIG_EXAMPLE, GROVE_CONFIG_FILE } from "./config.js";
 import { dev } from "./commands/dev.js";
 import { plant } from "./commands/plant.js";
+import { apply } from "./commands/apply.js";
 import { uproot } from "./commands/uproot.js";
 import { list } from "./commands/list.js";
 import { adopt } from "./commands/adopt.js";
@@ -121,6 +122,13 @@ program
   .option("--ignore-fingerprint", "Restore even when the captured schema differs")
   .addHelpText("after", `\n${CODE_GRAMMAR}\n\n${REF_GRAMMAR}\n\n${SLOT_CAP_GRAMMAR}\n`)
   .action(plant);
+
+program
+  .command("apply <project/instance>")
+  .description("Reapply the source config to an existing instance without cloning or changing state")
+  .option("--force", "Apply even when a target repo has tracked changes")
+  .addHelpText("after", "\nApply reruns copyFromSource, secrets, patchPortsIn, substituteIn, install, and setup.sh for an existing instance. It never clones code or applies state. It refuses the project source, planting instances, and tracked changes unless --force; untracked files may be overwritten by copyFromSource.\n")
+  .action(apply);
 
 program
   .command("snapshot <project/instance> <name>")

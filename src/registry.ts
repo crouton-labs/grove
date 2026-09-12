@@ -24,9 +24,27 @@ let registryLock: RegistryLock | undefined;
 export function loadRegistry(): GroveRegistry {
   fs.mkdirSync(GROVE_DIR, { recursive: true });
   if (!fs.existsSync(REGISTRY_PATH)) {
-    return { projects: {} };
+    return { version: 2, projects: {} };
   }
-  return JSON.parse(fs.readFileSync(REGISTRY_PATH, "utf-8"));
+  return upgradeRegistry(JSON.parse(fs.readFileSync(REGISTRY_PATH, "utf-8")) as GroveRegistry);
+}
+
+/** Upgrade the version-less registry shape in memory; the next save publishes v2. */
+function upgradeRegistry(registry: GroveRegistry): GroveRegistry {
+  if (registry.version === undefined) {
+    registry.version = 2;
+    for (const project of Object.values(registry.projects)) {
+      for (const instance of project.instances) {
+        instance.spec ??= { codeFrom: "configured", from: "baseline", labels: {} };
+        instance.applied ??= null;
+      }
+    }
+    return registry;
+  }
+  if (registry.version !== 2) {
+    throw new Error(`unsupported registry version ${registry.version} at ${REGISTRY_PATH}`);
+  }
+  return registry;
 }
 
 /** Publish a registry update only while this process still owns the lock. */

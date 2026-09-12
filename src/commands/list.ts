@@ -41,6 +41,9 @@ function renderTarget(project: string, target: InventoryTarget, source: boolean)
   if (target.needsState) {
     console.log(`    \x1b[33mstate not applied\x1b[0m — grove restore ${target.name} ${target.needsState}`);
   }
+  if (target.configStale) {
+    console.log(`    \x1b[33mstale config\x1b[0m — grove apply ${project}/${target.name}`);
+  }
   if (target.ports.length) {
     console.log(`    ${target.ports.map((port) => `${port.name}:${port.port} ${port.live ? "\x1b[32m●\x1b[0m" : "\x1b[90m○\x1b[0m"}`).join("  ")}`);
   }

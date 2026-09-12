@@ -8,20 +8,15 @@ import { computePorts, formatSlotCap, maxSlot } from "../ports.js";
 import {
   GROVE_CONFIG_FILE,
   loadRepoConfig,
-  hasSetupScript,
   resolveProjectPath,
-  setupFileForConfig,
 } from "../config.js";
 import {
-  applySubstitutions,
+  applyExistingCheckoutSetup,
   cloneRepos,
   cloneReposFromSource,
-  copyFromSource,
+  describeAppliedCode,
   describeClonedRepos,
-  patchPorts,
   resolveSourceCommits,
-  runInstalls,
-  runSecrets,
   type CodeSource,
   type SourceRepoCommit,
 } from "../setup.js";
@@ -39,7 +34,8 @@ import {
   sourceContext,
   type StateRef,
 } from "../state.js";
-import type { GroveInstance } from "../types.js";
+import type { GroveApplied, GroveInstance } from "../types.js";
+import { configHash } from "../intent.js";
 
 interface PlantOptions {
   slot?: string;
@@ -90,6 +86,7 @@ export async function plant(
 
   const configFile = proj.configFile ?? GROVE_CONFIG_FILE;
   const repoConfig = loadRepoConfig(proj.source, configFile);
+  const sourceConfigHash = configHash(repoConfig);
   if (repoConfig?.nameIsSlot && options.path) {
     console.error(`Error: ${project} declares nameIsSlot; its instance path is derived from the slot (<instancesDir>/<slot>). Remove --path.`);
     process.exit(1);
@@ -226,6 +223,8 @@ export async function plant(
       created: new Date().toISOString(),
       pending: "planting",
       reservationId,
+      spec: { codeFrom, from: options.from ?? BASELINE_REF, labels: {} },
+      applied: null,
     };
     if (pendingRef) instance.needsState = pendingRef;
     currentProject.instances.push(instance);
@@ -268,7 +267,6 @@ export async function plant(
   }
   console.log("");
 
-  const setupScriptExists = hasSetupScript(proj.source, configFile);
 
   if (repoConfig) {
     const configPortKeys = Object.keys(repoConfig.ports).sort().join(",");
@@ -321,79 +319,19 @@ export async function plant(
   }
 
   // --- Config-driven setup ---
-  if (repoConfig?.copyFromSource) {
-    console.log("Copying files from source...");
-    copyFromSource(
+  try {
+    applyExistingCheckoutSetup(
       proj.source,
       targetPath,
-      repoConfig.copyFromSource,
+      repoConfig,
       proj.ports,
-      slot,
       configFile,
+      executionContext,
+      settings,
     );
-  }
-
-  // Secrets run before port patching so a generated .env gets slot ports the
-  // same way a copied one does.
-  if (repoConfig?.secrets) {
-    console.log("Materializing secrets...");
-    try {
-      runSecrets(targetPath, repoConfig.secrets, () => groveContextEnv(executionContext, process.env, settings));
-    } catch (error) {
-      console.error(`Error: ${(error as Error).message}`);
-      process.exit(1);
-    }
-  }
-
-  if (repoConfig?.patchPortsIn) {
-    console.log("Patching port references...");
-    patchPorts(targetPath, repoConfig.patchPortsIn, proj.ports, slot, configFile);
-  }
-
-  // After ports: a substitution rule may rewrite a value a port patch just
-  // touched (a URL carrying both a hostname and a port), and the string rule is
-  // the more specific statement of the two.
-  if (repoConfig?.substituteIn) {
-    console.log("Applying per-slot substitutions...");
-    let machine: string;
-    try {
-      machine = groveContextEnv(executionContext, process.env, settings).GROVE_MACHINE!;
-    } catch (error) {
-      console.error(`Error: ${(error as Error).message}`);
-      process.exit(1);
-    }
-    applySubstitutions(targetPath, repoConfig.substituteIn, slot, machine, configFile);
-  }
-
-  if (repoConfig?.install) {
-    console.log("Installing dependencies...");
-    try {
-      runInstalls(targetPath, repoConfig.install, () => groveContextEnv(executionContext, process.env, settings));
-    } catch (error) {
-      console.error(`Error: ${(error as Error).message}`);
-      process.exit(1);
-    }
-  }
-
-  // --- setup.sh (runs last for anything config can't express) ---
-  if (setupScriptExists) {
-    const setupPath = resolveProjectPath(targetPath, setupFileForConfig(configFile));
-
-    console.log("Running setup script...");
-
-    let setupEnv: NodeJS.ProcessEnv;
-    try {
-      setupEnv = groveContextEnv(executionContext, process.env, settings);
-    } catch (error) {
-      console.error(`Error: ${(error as Error).message}`);
-      process.exit(1);
-    }
-    try {
-      execSync(`bash "${setupPath}"`, { stdio: "inherit", cwd: targetPath, env: setupEnv });
-    } catch {
-      console.error(`Error: setup script failed. Remove the partial planting with: grove uproot ${project}/${name}`);
-      process.exit(1);
-    }
+  } catch (error) {
+    console.error(`Error: ${(error as Error).message}. Remove the partial planting with: grove uproot ${project}/${name}`);
+    process.exit(1);
   }
 
   if (!fs.existsSync(targetPath)) {
@@ -416,6 +354,12 @@ export async function plant(
     }
   }
 
+  const applied: GroveApplied = {
+    configHash: sourceConfigHash,
+    at: new Date().toISOString(),
+    code: describeAppliedCode(targetPath, repoConfig?.repos),
+  };
+
   try {
     await withRegistryLock(async (currentRegistry) => {
       const instance = currentRegistry.projects[project]?.instances.find(
@@ -425,6 +369,7 @@ export async function plant(
       delete instance.pending;
       delete instance.reservationId;
       delete instance.needsState;
+      instance.applied = applied;
       await saveRegistry(currentRegistry);
       regenerateAliases(currentRegistry);
     });
@@ -445,6 +390,8 @@ export async function plant(
     code: repoConfig?.repos
       ? { mode: codeFrom, repos: describeClonedRepos(targetPath, repoConfig.repos) }
       : null,
+    spec: { codeFrom, from: options.from ?? BASELINE_REF, labels: {} },
+    applied,
   };
 
   console.log("");
