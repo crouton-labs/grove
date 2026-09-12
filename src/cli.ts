@@ -255,7 +255,8 @@ program
 
 program
   .command("ui [project]")
-  .description("Full-screen slot table through the project's computed slot cap")
+  .description("Full-screen slot table with per-instance operations")
+  .addHelpText("after", "\nThe table shows the source at slot 0, every instance, and empty slots through the computed cap, with each instance's labels-derived pool readiness, config drift, unapplied state, and in-progress reservation. The selected row runs plant, uproot, apply, release, rollback, label, and the project's lifecycle verbs; the project runs claim and pool. Rollout and selector fan-out are command-line only. Press ? for the full key map.\n")
   .action((project: string | undefined) => ui(project));
 
 program

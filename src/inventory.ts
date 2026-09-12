@@ -36,6 +36,8 @@ export interface InventoryTarget {
   pendingOperation: GrovePendingOperation | null;
   spec: GroveInstanceSpec | null;
   applied: GroveApplied | null;
+  /** Recorded revisions, newest first in the registry; two are the minimum rollback needs. */
+  revisions: number;
   configStale: boolean;
   tmuxSession: string;
   lifecycle: string[];
@@ -123,6 +125,7 @@ async function gatherTarget(
     pendingOperation: target.instance?.pendingOperation ?? null,
     spec: instance?.spec ?? null,
     applied,
+    revisions: instance?.history.length ?? 0,
     configStale: applied !== null && sourceConfigHash !== null && applied.configHash !== sourceConfigHash,
     tmuxSession: tmuxSessionName(target),
     lifecycle,

@@ -164,14 +164,23 @@ Grove derives the session name as `<project>-<slot>`: `northlight-3` for slot 3 
 `grove ui [project]` is a terminal UI over one project's slots — it shows the source at slot 0, every instance, and empty rows through the project's computed slot cap, limited to rows that fit in the terminal. When the terminal is too short for all of them, the table keeps the lowest slots that fit and ends with `… N more slots not shown`.
 
 ```
-grove ui — northlight  /Users/silasrhyneer/Code/northlight/grove/0
- SLOT  NAME         BRANCH               SYNC        SERVICES
-▸  0  (source)     mixed              ✱ ↑1 ↓6       core:3068 ● gateway:3069 ● vault:3073 ● cdp:9222 ●
-   1  1            main                 ↑0 ↓0       core:3168 ● gateway:3169 ● vault:3173 ● cdp:9223 ○
-   2  —            (empty)
+grove ui — fixture  pool 2 ready · 3 claimed  /Users/silasrhyneer/Code/cli/.grove-fixtures/ui-surfaces/source
+ SLOT  NAME         BRANCH               SYNC        STATE       SERVICES
+▸  0  (source)     main                 ↑0 ↓0                   app:65000 ○ api:63000 ○
+   1  alpha        main                 ↑0 ↓0                   app:65100 ○ api:63100 ○
+   2  beta         main                 ↑0 ↓0       stale       app:65200 ○ api:63200 ○
+   3  3            main                 ↑0 ↓0       pool        app:65300 ○ api:63300 ○
+   4  gamma        applying      Re-run with: grove apply fixture/gamma
+   5  delta        main                 ↑0 ↓0       no-state    app:65500 ○ api:63500 ○
 ```
 
+The title line carries the project's pool: how many instances are ready to claim and how many are claimed, by the same rule `grove pool` prints.
+
 A composite project has several repos per slot, so each column aggregates them: BRANCH is the branch every repo agrees on or the literal word `mixed`; SYNC is `↑A ↓B` summed across the repos that have an upstream, with a trailing `?` when any repo lacks one or its state is unknown; `✱` marks a slot where any repo has tracked changes (`dirty` never counts untracked files). The detail pane under the table always shows the selected slot's per-repo truth. SERVICES is each declared port and whether something is listening on it, which every project that declares ports gets without cooperating.
+
+STATE is the recorded intent a fleet is scanned for: `no-state` when the instance's data state was never applied, `stale` when it was built from an older source config, and `pool` when it carries `grove.pool=ready` and is claimable. An instance with a reservation replaces its whole row with the operation and the command that resolves it, so an interrupted `plant`, `uproot`, `apply`, `restore`, `release`, `rollout`, or `rollback` is visible without selecting the row. Every row is one line at any width: cells truncate, nothing wraps.
+
+The detail pane adds the selected instance's `intent` — its requested code mode, state ref, and labels — and its `applied` record: the short config hash, the time, how many revisions are recorded, the revision it was rolled back from, and `stale — grove apply <target>` when the source config has moved on. The source at slot 0 has no registry entry, so it shows neither.
 
 | key | action |
 |---|---|
@@ -181,10 +190,18 @@ A composite project has several repos per slot, so each column aggregates them: 
 | `p` | plant the selected empty slot |
 | `u` | uproot the selected instance, after a `y/n` confirmation |
 | `s` `S` `r` `t` | the project's `start`, `stop`, `reset`, and `status` lifecycle verbs; `r` confirms first |
+| `a` `A` | `grove apply` the selected instance, and `apply --force` over tracked changes; both confirm |
+| `e` `E` | `grove release` the selected instance into the pool, and `release --force` discarding repository changes; both confirm |
+| `b` | `grove rollback` the selected instance one revision, after a confirmation; dimmed under two recorded revisions |
+| `l` `L` | add labels, or remove them by key — each opens a one-line prompt; `Enter` runs, `Esc` cancels |
+| `c` | `grove claim` the project's lowest-slot ready instance |
+| `P` | grow the project's ready pool: a prompt for the size, then a confirmation |
 | `R` | `git fetch` every repo, then re-read |
 | `?` | help · `q` or `Esc` quit |
 
-A key the selected row does not support is dimmed in the footer and answers with the same refusal Grove's own command would print — `p` on an occupied slot, `u` on the source, or a lifecycle role the project's `lifecycle` mapping does not declare. While a command runs, the pane below the table shows the resolved argv, a rising elapsed count, and the child's output; `Ctrl-C` interrupts it and leaves the UI running.
+Every action runs Grove's own CLI as a child and shows the resolved argv, a rising elapsed count, and the child's output in the pane below the table; `Ctrl-C` interrupts it and leaves the UI running, and the inventory is re-read when it exits. Actions act on one target: `c` and `P` on the project, everything else on the selected row. `grove ui` has no `rollout` and no selector fan-out — use `grove rollout` and `-l`/`--all` from the command line for those.
+
+A key the selected row does not support is dimmed in the footer and answers with the same refusal Grove's own command would print — `p` on an occupied slot, `u` or `a` on the source, or a lifecycle role the project's `lifecycle` mapping does not declare.
 
 `t` runs the project's `status` verb and shows its output verbatim in the detail pane. Grove never parses it, so a project can print whatever it likes.
 

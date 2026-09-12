@@ -1,4 +1,5 @@
 import { loadRegistry } from "../registry.js";
+import type { GroveInstance } from "../types.js";
 import { plant } from "./plant.js";
 
 interface PoolOptions {
@@ -37,16 +38,27 @@ function parseSize(value: string): number {
   return size;
 }
 
+/**
+ * The one readiness rule `pool`, `claim`, and `grove ui` all report. An in-flight plant carries
+ * needsState until it completes, so it counts; a settled instance that never got its state does
+ * not, because claim refuses it.
+ */
+export function isPoolReady(instance: {
+  spec: { labels: Record<string, string> } | null;
+  pending?: GroveInstance["pending"] | null;
+  needsState?: string | null;
+}): boolean {
+  if (instance.spec?.labels["grove.pool"] !== "ready") return false;
+  if (instance.pending === "planting") return true;
+  return !instance.pending && !instance.needsState;
+}
+
 function poolStatus(projectName: string) {
   const registry = loadRegistry();
   const project = registry.projects[projectName];
   if (!project) throw new Error(`project "${projectName}" not registered`);
   const ready = project.instances
-    .filter((instance) =>
-      instance.spec.labels["grove.pool"] === "ready" &&
-      // An in-flight plant carries needsState until it completes, so it counts; a settled
-      // instance that never got its state does not, because claim refuses it.
-      (instance.pending === "planting" || (instance.pending === undefined && !instance.needsState)))
+    .filter(isPoolReady)
     .sort((a, b) => a.slot - b.slot || a.name.localeCompare(b.name));
   return { project, ready };
 }

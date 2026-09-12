@@ -15,13 +15,16 @@ import { loadSettings } from "../settings.js";
 import { pendingResolution } from "../state.js";
 import { resolveTargetFromCwd, type GroveTarget } from "../target.js";
 import { killSessionOnStop, switchToSession } from "../tmux.js";
+import { isPoolReady } from "./pool.js";
 
 const LOG_LINES = 12;
 const STATUS_PREFIX_WIDTH = 8;
 /** Empty rows shown by default, which keeps every digit key 0-9 on a row. */
 const DEFAULT_SLOT_WINDOW = 9;
 /** Terminal rows the table cannot have: the chrome statusRowBudget subtracts, plus one status row. */
-const RESERVED_ROWS = 9;
+const RESERVED_ROWS = 10;
+/** The STATE column, wide enough for the longest single word plus a second short one. */
+const STATE_WIDTH = 12;
 
 export async function ui(projectRef?: string): Promise<void> {
   try {
@@ -163,6 +166,46 @@ function pad(value: string, width: number): string {
   return value.length > width ? value.slice(0, width - 1) + "…" : value.padEnd(width);
 }
 
+interface StateToken {
+  text: string;
+  color: string;
+}
+
+/**
+ * The recorded intent a fleet is scanned for: an instance whose data state was never applied, one
+ * built from an older source config, and one waiting in the ready pool. Ordered by what makes
+ * someone act, so a narrow STATE column truncates the least urgent word first.
+ */
+function stateTokens(target: InventoryTarget): StateToken[] {
+  const tokens: StateToken[] = [];
+  if (target.needsState) tokens.push({ text: "no-state", color: "yellow" });
+  if (target.configStale) tokens.push({ text: "stale", color: "yellow" });
+  if (isPoolReady(target)) tokens.push({ text: "pool", color: "green" });
+  return tokens;
+}
+
+/** Ready and claimed counts by the same rule `grove pool` prints, so the two surfaces agree. */
+function poolCounts(project: InventoryProject): { ready: number; claimed: number } {
+  const ready = project.instances.filter(isPoolReady).length;
+  return { ready, claimed: project.instances.length - ready };
+}
+
+/** Labels as `grove list` writes them: sorted by key, space separated. */
+function formatLabels(labels: Record<string, string>): string {
+  const entries = Object.entries(labels).sort(([a], [b]) => a.localeCompare(b));
+  return entries.length ? entries.map(([key, value]) => `${key}=${value}`).join(" ") : "(none)";
+}
+
+/** Enough config hash to tell two revisions apart by eye; `grove list --json` carries all of it. */
+function formatApplied(target: InventoryTarget): string {
+  const applied = target.applied;
+  if (!applied) return "(never applied)";
+  const when = applied.at.slice(0, 16).replace("T", " ");
+  const revisions = `${target.revisions} revision${target.revisions === 1 ? "" : "s"}`;
+  const rolledBack = applied.rolledBackFrom ? ` · rolled back from ${applied.rolledBackFrom.slice(0, 16).replace("T", " ")}` : "";
+  return `config ${applied.configHash.slice(0, 8)} · ${when} · ${revisions}${rolledBack}`;
+}
+
 // --- child processes --------------------------------------------------------
 
 /** Run grove's own CLI as a child so its output lands in the log pane. */
@@ -223,6 +266,14 @@ interface Confirmation {
   run: () => void;
 }
 
+/** One line of typed input an action needs before it can run: labels, or a pool size. */
+interface Prompt {
+  label: string;
+  hint: string;
+  value: string;
+  submit: (value: string) => void;
+}
+
 function App({ projectName }: { projectName: string }) {
   const { exit } = useApp();
   const { stdout } = useStdout();
@@ -233,6 +284,7 @@ function App({ projectName }: { projectName: string }) {
   const [statusText, setStatusText] = useState<{ key: string; lines: string[] } | null>(null);
   const [action, setAction] = useState<ActionState | null>(null);
   const [confirmation, setConfirmation] = useState<Confirmation | null>(null);
+  const [prompt, setPrompt] = useState<Prompt | null>(null);
   const [help, setHelp] = useState(false);
   const [, setTick] = useState(0);
   const interrupt = useRef<(() => void) | null>(null);
@@ -376,6 +428,29 @@ function App({ projectName }: { projectName: string }) {
     });
   }, [project, startAction]);
 
+  /**
+   * Every action is grove's own CLI run through startAction, so the pane shows the resolved argv,
+   * the elapsed count, and the child's output, and the inventory is re-read when it exits.
+   */
+  const runGrove = (title: string, args: string[], confirmPrompt?: string) => {
+    const run = () => startAction(title, `grove ${args.join(" ")}`, (onLine) => runGroveCaptured(args, onLine));
+    if (confirmPrompt) return setConfirmation({ prompt: confirmPrompt, run });
+    run();
+  };
+
+  /** The instance ref for an action that needs one, or null after naming grove's own refusal. */
+  const requireInstance = (verb: string): string | null => {
+    if (row?.isSource) {
+      setMessage(`slot 0 is the project source — grove ${verb} needs a planted instance.`);
+      return null;
+    }
+    if (!target) {
+      setMessage(`slot ${row?.slot} has no instance — press p to plant one.`);
+      return null;
+    }
+    return targetRef;
+  };
+
   useInput((input, key) => {
     if (key.ctrl && input === "c") {
       if (running) {
@@ -393,6 +468,24 @@ function App({ projectName }: { projectName: string }) {
       setConfirmation(null);
       if (confirmed) pending.run();
       else setMessage("Cancelled.");
+      return;
+    }
+    if (prompt) {
+      if (key.escape) {
+        setPrompt(null);
+        return setMessage("Cancelled.");
+      }
+      if (key.return) {
+        const value = prompt.value.trim();
+        setPrompt(null);
+        if (!value) return setMessage("Cancelled — nothing entered.");
+        return prompt.submit(value);
+      }
+      if (key.backspace || key.delete) return setPrompt({ ...prompt, value: prompt.value.slice(0, -1) });
+      // Label keys, label values, and a pool size are all printable ASCII, so anything else a
+      // terminal sends — an arrow's escape sequence, a control byte — is dropped rather than typed.
+      const typed = input.replace(/[^\x20-\x7e]/g, "");
+      if (typed && !key.ctrl && !key.meta) return setPrompt({ ...prompt, value: prompt.value + typed });
       return;
     }
     if (input === "q" || key.escape) return exit();
@@ -431,19 +524,72 @@ function App({ projectName }: { projectName: string }) {
       if (target) return setMessage(`slot ${row?.slot} already holds ${targetRef} — uproot it first.`);
       const plantSlot = row?.slot;
       if (plantSlot === undefined) return;
-      return startAction(`plant ${projectName} slot ${plantSlot}`, `grove plant ${projectName} --slot ${plantSlot}`, (onLine) =>
-        runGroveCaptured(["plant", projectName, "--slot", String(plantSlot)], onLine),
-      );
+      return runGrove(`plant ${projectName} slot ${plantSlot}`, ["plant", projectName, "--slot", String(plantSlot)]);
     }
     if (input === "u") {
       if (row?.isSource) return setMessage("slot 0 is the project source — grove uproot would delete the project checkout.");
       if (!target) return setMessage(`slot ${row?.slot} has no instance.`);
-      const name = target.name;
-      return setConfirmation({
-        prompt: `Uproot ${targetRef}? Its directory and services go away. (y/n)`,
-        run: () =>
-          startAction(`uproot ${targetRef}`, `grove uproot ${projectName}/${name} --force`, (onLine) =>
-            runGroveCaptured(["uproot", `${projectName}/${name}`, "--force"], onLine),
+      return runGrove(
+        `uproot ${targetRef}`,
+        ["uproot", targetRef, "--force"],
+        `Uproot ${targetRef}? Its directory and services go away. (y/n)`,
+      );
+    }
+    if (input === "a" || input === "A") {
+      const ref = requireInstance("apply");
+      if (!ref) return;
+      const force = input === "A";
+      return runGrove(
+        force ? `apply ${ref} --force` : `apply ${ref}`,
+        force ? ["apply", ref, "--force"] : ["apply", ref],
+        force
+          ? `Apply the source config to ${ref}, overwriting tracked repository changes? (y/n)`
+          : `Apply the source config to ${ref}? (y/n)`,
+      );
+    }
+    if (input === "e" || input === "E") {
+      const ref = requireInstance("release");
+      if (!ref) return;
+      const force = input === "E";
+      return runGrove(
+        force ? `release ${ref} --force` : `release ${ref}`,
+        force ? ["release", ref, "--force"] : ["release", ref],
+        `Release ${ref} into the pool? Its data state resets${force ? ", its repository changes are discarded" : ""}, and its labels become grove.pool=ready. (y/n)`,
+      );
+    }
+    if (input === "b") {
+      const ref = requireInstance("rollback");
+      if (!ref || !target) return;
+      if (target.revisions < 2) {
+        return setMessage(`${ref} has ${target.revisions} recorded revision${target.revisions === 1 ? "" : "s"} — rollback needs two.`);
+      }
+      return runGrove(`rollback ${ref}`, ["rollback", ref], `Roll ${ref} back to its previous recorded revision? (y/n)`);
+    }
+    if (input === "l" || input === "L") {
+      const ref = requireInstance("label");
+      if (!ref) return;
+      const removing = input === "L";
+      return setPrompt({
+        label: removing ? `remove labels from ${ref}` : `label ${ref}`,
+        hint: removing ? "space-separated keys" : "space-separated key=value pairs",
+        value: "",
+        submit: (value) => {
+          const words = value.split(/\s+/);
+          return runGrove(`label ${ref}`, ["label", ref, ...(removing ? words.flatMap((word) => ["--rm", word]) : words)]);
+        },
+      });
+    }
+    if (input === "c") return runGrove(`claim ${projectName}`, ["claim", projectName]);
+    if (input === "P") {
+      return setPrompt({
+        label: `pool ${projectName} --size`,
+        hint: "how many ready instances the pool should hold",
+        value: "",
+        submit: (size) =>
+          runGrove(
+            `pool ${projectName} --size ${size}`,
+            ["pool", projectName, "--size", size],
+            `Plant ${projectName} until ${size} ready instances exist? (y/n)`,
           ),
       });
     }
@@ -470,23 +616,31 @@ function App({ projectName }: { projectName: string }) {
 
   const width = stdout?.columns ?? 100;
   const declares = (role: LifecycleRole) => Boolean(target?.lifecycle.includes(role));
-  const statusBudget = statusRowBudget(terminalRows, rows.length + (hidden > 0 ? 1 : 0), target?.pending ? 1 : 0);
+  const statusBudget = statusRowBudget(terminalRows, rows.length + (hidden > 0 ? 1 : 0), extraDetailRows(target));
+  const poolState = poolCounts(project);
+  const instanceSelected = Boolean(target) && !row.isSource;
 
   return (
     <Box flexDirection="column" width={width}>
       {/* Every row outside the status region truncates rather than wraps, so each is one row at any
           width — which is the chrome count statusRowBudget subtracts. */}
-      <Box>
-        <Text bold wrap="truncate-end">{`grove ui — ${projectName}`}</Text>
-        <Text dimColor wrap="truncate-end">{`  ${project.source}`}</Text>
-      </Box>
-      <Text dimColor wrap="truncate-end">{` ${pad("SLOT", 6)}${pad("NAME", 13)}${pad("BRANCH", 19)}${pad("", 2)}${pad("SYNC", 12)}SERVICES`}</Text>
+      {/* One Text rather than a row of them, so a narrow terminal truncates the source path — the
+          least load-bearing part — instead of shrinking every part including the project name. */}
+      <Text wrap="truncate-end">
+        <Text bold>{`grove ui — ${projectName}`}</Text>
+        <Text dimColor>{`  pool ${poolState.ready} ready · ${poolState.claimed} claimed`}</Text>
+        <Text dimColor>{`  ${project.source}`}</Text>
+      </Text>
+      <Text dimColor wrap="truncate-end">{` ${pad("SLOT", 6)}${pad("NAME", 13)}${pad("BRANCH", 19)}${pad("", 2)}${pad("SYNC", 12)}${pad("STATE", STATE_WIDTH)}SERVICES`}</Text>
       {rows.map((entry, entryIndex) => (
-        <SlotRow key={entry.key} row={entry} selected={entryIndex === index} />
+        <SlotRow key={entry.key} projectName={projectName} row={entry} selected={entryIndex === index} />
       ))}
       {hidden > 0 ? <Text dimColor wrap="truncate-end">{hiddenRowNotice(hidden)}</Text> : null}
       <Text dimColor>{"─".repeat(Math.max(10, width - 1))}</Text>
-      {action ? (
+      {/* One variable-height region: the running action, the selected row's detail, or help. */}
+      {help ? (
+        <HelpPane />
+      ) : action ? (
         <ActionPane action={action} />
       ) : (
         <DetailPane
@@ -499,42 +653,68 @@ function App({ projectName }: { projectName: string }) {
       )}
       <Text dimColor>{"─".repeat(Math.max(10, width - 1))}</Text>
       {help ? (
-        <HelpPane />
+        <Text dimColor>press any key to close</Text>
       ) : (
-        <Text wrap="truncate-end">{confirmation ? <Text color="yellow">{confirmation.prompt}</Text> : message}</Text>
-      )}
-      <Box>
         <Text wrap="truncate-end">
-          <Text dimColor={!target}>o open</Text>
-          <Text dimColor> · </Text>
-          <Text dimColor={Boolean(target) || row.isSource}>p plant</Text>
-          <Text dimColor> · </Text>
-          <Text dimColor={!target || row.isSource}>u uproot</Text>
-          <Text dimColor> · </Text>
-          <Text dimColor={!declares("start")}>s start</Text>
-          <Text dimColor> · </Text>
-          <Text dimColor={!declares("stop")}>S stop</Text>
-          <Text dimColor> · </Text>
-          <Text dimColor={!declares("reset")}>r reset</Text>
-          <Text dimColor> · </Text>
-          <Text dimColor={!declares("status")}>t status</Text>
-          <Text dimColor> · </Text>
-          <Text>R refresh</Text>
-          <Text dimColor> · ? help · q quit</Text>
+          {prompt ? (
+            <Text color="yellow">
+              {`${prompt.label} ▸ ${prompt.value}█  `}
+              <Text dimColor>{`${prompt.hint} · Enter runs · Esc cancels`}</Text>
+            </Text>
+          ) : confirmation ? (
+            <Text color="yellow">{confirmation.prompt}</Text>
+          ) : (
+            message
+          )}
         </Text>
-      </Box>
+      )}
+      {/* Two footer lines, both counted as chrome by statusRowBudget and RESERVED_ROWS. */}
+      <Text wrap="truncate-end">
+        <Text dimColor={!target}>o open</Text>
+        <Text dimColor> · </Text>
+        <Text dimColor={Boolean(target) || row.isSource}>p plant</Text>
+        <Text dimColor> · </Text>
+        <Text dimColor={!instanceSelected}>u uproot</Text>
+        <Text dimColor> · </Text>
+        <Text dimColor={!instanceSelected}>a apply (A force)</Text>
+        <Text dimColor> · </Text>
+        <Text dimColor={!instanceSelected}>e release (E force)</Text>
+        <Text dimColor> · </Text>
+        <Text dimColor={!instanceSelected || (target?.revisions ?? 0) < 2}>b rollback</Text>
+        <Text dimColor> · </Text>
+        <Text dimColor={!instanceSelected}>l label</Text>
+        <Text dimColor> · </Text>
+        <Text dimColor={!instanceSelected}>L rm label</Text>
+      </Text>
+      <Text wrap="truncate-end">
+        <Text dimColor={!declares("start")}>s start</Text>
+        <Text dimColor> · </Text>
+        <Text dimColor={!declares("stop")}>S stop</Text>
+        <Text dimColor> · </Text>
+        <Text dimColor={!declares("reset")}>r reset</Text>
+        <Text dimColor> · </Text>
+        <Text dimColor={!declares("status")}>t status</Text>
+        <Text dimColor> · </Text>
+        <Text>c claim</Text>
+        <Text dimColor> · </Text>
+        <Text>P pool</Text>
+        <Text dimColor> · </Text>
+        <Text>R refresh</Text>
+        <Text dimColor> · ? help · q quit</Text>
+      </Text>
     </Box>
   );
 }
 
-function SlotRow({ row, selected }: { row: Row; selected: boolean }) {
+function SlotRow({ projectName, row, selected }: { projectName: string; row: Row; selected: boolean }) {
   const target = row.target;
   const name = row.isSource ? "(source)" : target?.name ?? "—";
   const cursor = selected ? "▸" : " ";
+  const head = `${cursor}${String(row.slot).padStart(3)}  ${pad(name, 13)}`;
   if (!target) {
     return (
-      <Text color={selected ? "cyan" : undefined}>
-        {`${cursor}${String(row.slot).padStart(3)}  ${pad(name, 13)}`}
+      <Text color={selected ? "cyan" : undefined} wrap="truncate-end">
+        {head}
         <Text dimColor>(empty)</Text>
       </Text>
     );
@@ -542,25 +722,29 @@ function SlotRow({ row, selected }: { row: Row; selected: boolean }) {
   // A reserved slot is checked before the directory, because the reservation outlives the directory
   // at both ends: plant registers the instance before it creates anything, and uproot removes the
   // directory before it deregisters. An in-flight or interrupted plant or uproot is not a zombie.
+  // The row carries the resolving command too, so a fleet scan shows the recovery without selecting
+  // the row; the detail pane repeats it for the selected instance.
   if (target.pending) {
     return (
-      <Text color={selected ? "cyan" : undefined}>
-        {`${cursor}${String(row.slot).padStart(3)}  ${pad(name, 13)}`}
-        <Text color="yellow">{target.pending}</Text>
+      <Text color={selected ? "cyan" : undefined} wrap="truncate-end">
+        {head}
+        <Text color="yellow">{pad(target.pending, 14)}</Text>
+        <Text dimColor>{pendingResolution(projectName, target)}</Text>
       </Text>
     );
   }
   if (!target.exists) {
     return (
-      <Text color={selected ? "cyan" : undefined}>
-        {`${cursor}${String(row.slot).padStart(3)}  ${pad(name, 13)}`}
+      <Text color={selected ? "cyan" : undefined} wrap="truncate-end">
+        {head}
         <Text color="red">zombie — directory missing</Text>
       </Text>
     );
   }
   return (
     <Text color={selected ? "cyan" : undefined} wrap="truncate-end">
-      {`${cursor}${String(row.slot).padStart(3)}  ${pad(name, 13)}${pad(aggregateBranch(target), 19)}${pad(aggregateDirty(target), 2)}${pad(aggregateSync(target), 12)}`}
+      {`${head}${pad(aggregateBranch(target), 19)}${pad(aggregateDirty(target), 2)}${pad(aggregateSync(target), 12)}`}
+      <StateCell tokens={stateTokens(target)} width={STATE_WIDTH} />
       {target.ports.map((port) => (
         <Text key={port.name}>
           {`${port.name}:${port.port} `}
@@ -568,8 +752,25 @@ function SlotRow({ row, selected }: { row: Row; selected: boolean }) {
           {" "}
         </Text>
       ))}
-      {target.needsState ? <Text color="yellow">{`state not applied (${target.needsState})`}</Text> : null}
     </Text>
+  );
+}
+
+/**
+ * The STATE column at a fixed width, one color per word. Every word is ASCII, so a cell's width is
+ * its string length; a combination longer than the column truncates like any other cell rather than
+ * pushing SERVICES out of alignment.
+ */
+function StateCell({ tokens, width }: { tokens: StateToken[]; width: number }) {
+  const text = tokens.map((token) => token.text).join(" ");
+  if (text.length > width) return <Text color={tokens[0].color}>{pad(text, width)}</Text>;
+  return (
+    <>
+      {tokens.map((token, index) => (
+        <Text key={token.text} color={token.color}>{index === 0 ? token.text : ` ${token.text}`}</Text>
+      ))}
+      <Text>{" ".repeat(width - text.length)}</Text>
+    </>
   );
 }
 
@@ -594,10 +795,11 @@ function DetailPane({
       </Box>
     );
   }
+  const targetRef = row.isSource ? project.name : `${project.name}/${target.name}`;
   return (
     <Box flexDirection="column">
       <Text wrap="truncate-end">
-        <Text bold>{row.isSource ? `${project.name} (source, slot 0)` : `${project.name}/${target.name}`}</Text>
+        <Text bold>{row.isSource ? `${project.name} (source, slot 0)` : targetRef}</Text>
         <Text>{`  ${target.path}  `}</Text>
         <Text dimColor>{`session ${target.tmuxSession}`}</Text>
       </Text>
@@ -607,6 +809,27 @@ function DetailPane({
           <Text color="yellow">{target.pending}</Text>
           <Text>{` — ${pendingResolution(project.name, target)}`}</Text>
         </Text>
+      ) : null}
+      {target.needsState ? (
+        <Text wrap="truncate-end">
+          <Text dimColor>state   </Text>
+          <Text color="yellow">{`not applied (${target.needsState})`}</Text>
+          <Text>{` — grove restore ${targetRef} ${target.needsState}`}</Text>
+        </Text>
+      ) : null}
+      {/* The source has no registry entry, so it records no spec and no revisions. */}
+      {target.spec ? (
+        <>
+          <Text wrap="truncate-end">
+            <Text dimColor>intent  </Text>
+            <Text>{`code ${target.spec.codeFrom} · state ${target.spec.from} · labels ${formatLabels(target.spec.labels)}`}</Text>
+          </Text>
+          <Text wrap="truncate-end">
+            <Text dimColor>applied </Text>
+            <Text>{formatApplied(target)}</Text>
+            {target.configStale ? <Text color="yellow">{`  stale — grove apply ${targetRef}`}</Text> : null}
+          </Text>
+        </>
       ) : null}
       <Text wrap="truncate-end">
         <Text dimColor>repos   </Text>
@@ -627,12 +850,18 @@ function DetailPane({
 /**
  * How many terminal rows the status region may occupy. Everything else on screen is one row each:
  * the title, the column header, every table row (each slot, plus the dropped-rows notice when there
- * is one), two dividers, the message line, the footer, and the detail pane's target and repos lines.
- * `pendingRows` is 1 when the detail pane also shows a pending instance's state and the command that
- * resolves it, which is a row the status region must not spend.
+ * is one), two dividers, the message line, both footer lines, and the detail pane's target and repos
+ * lines. `extraDetailRows` is every further detail line the selected row brings with it, which the
+ * status region must not spend.
  */
-function statusRowBudget(terminalRows: number, tableRows: number, pendingRows: number): number {
-  return Math.max(0, terminalRows - (tableRows + pendingRows + 8));
+function statusRowBudget(terminalRows: number, tableRows: number, extraDetailRows: number): number {
+  return Math.max(0, terminalRows - (tableRows + extraDetailRows + 9));
+}
+
+/** Detail lines beyond the header and repos lines the status budget already accounts for. */
+function extraDetailRows(target: InventoryTarget | null): number {
+  if (!target) return 0;
+  return (target.pending ? 1 : 0) + (target.needsState ? 1 : 0) + (target.spec ? 2 : 0);
 }
 
 const statusNotice = (hidden: number) => `… ${hidden} more ${hidden === 1 ? "line" : "lines"} not shown`;
@@ -730,12 +959,15 @@ function ActionPane({ action }: { action: ActionState }) {
 function HelpPane() {
   return (
     <Box flexDirection="column">
-      <Text bold>keys</Text>
-      <Text>↑/k ↓/j move · 0-9 jump to one of the first ten rows · o switch to the slot's tmux session and exit</Text>
-      <Text>p plant an empty slot · u uproot (confirms) · s start · S stop · r reset (confirms)</Text>
-      <Text>t run the project's status verb · R git fetch every repo, then re-read</Text>
-      <Text>q or Esc quit · Ctrl-C interrupts a running action, or quits when idle</Text>
-      <Text dimColor>press any key to close</Text>
+      {/* Every line fits an 80-column terminal and truncates rather than wraps, so the pane is
+          always exactly as tall as it looks here and the footer stays on screen. */}
+      <Text bold wrap="truncate-end">keys — * confirms first · q or Esc quits · Ctrl-C interrupts an action</Text>
+      <Text wrap="truncate-end">↑/k ↓/j move · 0-9 jump to a row · o tmux session · R fetch and re-read</Text>
+      <Text wrap="truncate-end">p plant · u uproot* · s start · S stop · r reset* · t status verb</Text>
+      <Text wrap="truncate-end">a apply the source config* · A apply over tracked changes* · b roll back*</Text>
+      <Text wrap="truncate-end">e release into the pool* · E release discarding repo changes*</Text>
+      <Text wrap="truncate-end">l add labels · L remove labels · project: c claim · P grow the pool*</Text>
+      <Text wrap="truncate-end">STATE: no-state state never applied · stale older config · pool ready</Text>
     </Box>
   );
 }
