@@ -260,7 +260,10 @@ function Picker({ projects, onSelect }: { projects: string[]; onSelect: (name: s
 interface ActionState {
   title: string;
   command: string;
+  /** The tail shown while the action runs. */
   lines: string[];
+  /** Every line the action wrote, expanded for display, set once it exits. */
+  output: string[] | null;
   startedAt: number;
   exit: number | null;
 }
@@ -340,12 +343,17 @@ function App({ projectName }: { projectName: string }) {
   const targetRef = target && !row?.isSource ? `${projectName}/${target.name}` : projectName;
 
   const startAction = useCallback(
-    (title: string, command: string, start: (onLine: (line: string) => void) => LifecycleRun, done?: (code: number) => void) => {
+    (title: string, command: string, start: (onLine: (line: string) => void) => LifecycleRun, done?: (code: number, output: string[]) => void) => {
       setStatusText(null);
       setMessage("");
-      setAction({ title, command, lines: [], startedAt: Date.now(), exit: null });
-      const onLine = (line: string) =>
+      setAction({ title, command, lines: [], output: null, startedAt: Date.now(), exit: null });
+      // Every line is kept here; the pane shows a tail while the action runs and the whole of it,
+      // as much as fits, once it exits.
+      const captured: string[] = [];
+      const onLine = (line: string) => {
+        captured.push(line);
         setAction((current) => (current ? { ...current, lines: [...current.lines, line].slice(-LOG_LINES) } : current));
+      };
       let run: LifecycleRun;
       try {
         run = start(onLine);
@@ -358,8 +366,9 @@ function App({ projectName }: { projectName: string }) {
       run.exit.then(
         (code) => {
           interrupt.current = null;
-          setAction((current) => (current ? { ...current, exit: code } : current));
-          done?.(code);
+          const output = expandJsonOutput(captured) ?? captured;
+          setAction((current) => (current ? { ...current, exit: code, output } : current));
+          done?.(code, output);
           void refresh();
         },
         (runError: Error) => {
@@ -401,20 +410,15 @@ function App({ projectName }: { projectName: string }) {
         } catch (planError) {
           return setMessage((planError as Error).message);
         }
-        const captured: string[] = [];
         startAction(
           `${role} ${targetRef}`,
           [plan.command, ...plan.argv].join(" "),
-          (onLine) =>
-            runLifecycleCaptured(plan, (line) => {
-              captured.push(line);
-              onLine(line);
-            }),
-          (code) => {
+          (onLine) => runLifecycleCaptured(plan, onLine),
+          (code, output) => {
             if (role === "status" && code === 0) {
               // The status verb's output belongs in the detail pane, so drop the action pane it ran behind.
               // Every captured line is kept; the detail pane decides how many of them fit.
-              setStatusText({ key: targetRef, lines: captured });
+              setStatusText({ key: targetRef, lines: output });
               setAction(null);
             }
             if (role === "stop" && code === 0 && settings) {
@@ -668,7 +672,7 @@ function App({ projectName }: { projectName: string }) {
       {help ? (
         <HelpPane />
       ) : action ? (
-        <ActionPane action={action} budget={variableRegionRows(terminalRows, tableRows)} />
+        <ActionPane action={action} budget={variableRegionRows(terminalRows, tableRows)} width={width} />
       ) : (
         <DetailPane
           project={project}
@@ -969,11 +973,63 @@ function StatusLines({ lines, budget, width }: { lines: string[]; budget: number
 /** The action's title and exit line, which every action pane shows before any output. */
 const ACTION_FIXED_ROWS = 2;
 
-function ActionPane({ action, budget }: { action: ActionState; budget: number }) {
+/**
+ * Expand a project's machine-readable output for display. A project can put `--json` in its
+ * lifecycle argv, which makes the whole run one very long line — unreadable in a pane that
+ * truncates. When the captured output is exactly one JSON object, it becomes one line per field,
+ * with an array taking a line per element, so the fields the project prints first stay on screen
+ * and a field it prints last is what overflows. Anything else is shown exactly as the project
+ * wrote it. Grove only reshapes the text; it never reads a value or acts on one.
+ */
+function expandJsonOutput(lines: string[]): string[] | null {
+  const text = lines.join("\n").trim();
+  if (!text.startsWith("{")) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+  const expanded: string[] = [];
+  const indent = (value: string) => {
+    for (const line of value.split("\n")) expanded.push(`  ${line}`);
+  };
+  for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+    if (value === null || value === undefined) expanded.push(`${key}: —`);
+    else if (Array.isArray(value)) {
+      if (value.length === 0) expanded.push(`${key}: (none)`);
+      else {
+        expanded.push(`${key}:`);
+        for (const entry of value) indent(typeof entry === "string" ? entry : JSON.stringify(entry, null, 2));
+      }
+    } else if (typeof value === "object") {
+      expanded.push(`${key}:`);
+      indent(JSON.stringify(value, null, 2));
+    } else {
+      const [first, ...rest] = String(value).split("\n");
+      expanded.push(`${key}: ${first}`);
+      for (const line of rest) expanded.push(`  ${line}`);
+    }
+  }
+  return expanded;
+}
+
+/**
+ * While the action runs, the tail is what matters and every line stays one row, so the pane's
+ * height is known. Once it exits, the whole output is read from the top — where a project puts its
+ * verdict — wrapped rather than truncated, because truncation hides content silently, and the
+ * notice says how many lines did not fit.
+ */
+function ActionPane({ action, budget, width }: { action: ActionState; budget: number; width: number }) {
   const elapsed = Math.round((Date.now() - action.startedAt) / 1000);
-  // The most recent output, cut to the region rather than to LOG_LINES: a chatty child — claim
-  // prints its whole grove-output block — would otherwise push the footer off the screen.
-  const shown = action.lines.slice(-Math.max(0, budget - ACTION_FIXED_ROWS));
+  const rows = Math.max(0, budget - ACTION_FIXED_ROWS);
+  const finished = action.output !== null;
+  // While it runs: the most recent output, cut to the region rather than to LOG_LINES, because a
+  // chatty child — claim prints its whole grove-output block — would push the footer off screen.
+  const { shown, hidden } = finished
+    ? fitStatusLines(action.output!, rows, Math.max(1, width - 1))
+    : { shown: action.lines.slice(-rows), hidden: 0 };
   return (
     <Box flexDirection="column">
       <Text wrap="truncate-end">
@@ -988,10 +1044,15 @@ function ActionPane({ action, budget }: { action: ActionState; budget: number })
         )}
       </Text>
       {shown.map((line, lineIndex) => (
-        <Text key={lineIndex} dimColor wrap="truncate-end">
-          {line}
-        </Text>
+        // minHeight keeps a blank line in the project's output a blank row here, so the pane is as
+        // tall as it was measured to be.
+        <Box key={lineIndex} minHeight={1}>
+          <Text dimColor wrap={finished ? "wrap" : "truncate-end"}>
+            {line}
+          </Text>
+        </Box>
       ))}
+      {hidden > 0 ? <Text dimColor>{statusNotice(hidden)}</Text> : null}
     </Box>
   );
 }
