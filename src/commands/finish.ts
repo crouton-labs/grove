@@ -37,9 +37,24 @@ export interface FinishResult {
   repos: FinishRepository[];
 }
 
-interface LandedCheck {
+export interface LandedCheck {
   result: FinishResult;
   externalWorktrees: string[];
+}
+
+/**
+ * How much work the landed check found: unlanded commits, dirty working trees,
+ * and stash entries. The UI's WORK column and finish's refusal read the same
+ * report, so they can only disagree about how current the remote refs are.
+ */
+export function countWork(result: FinishResult): number {
+  let total = 0;
+  for (const repository of result.repos) {
+    for (const branch of repository.branches) total += branch.unlanded.length;
+    total += repository.worktrees.length;
+    total += repository.stash;
+  }
+  return total;
 }
 
 export async function finish(targetRef: string | undefined, options: { instance?: string; owner?: string; json?: boolean; selector?: string; all?: boolean }): Promise<void> {
@@ -128,7 +143,13 @@ export async function verifyClaimFreshness(target: GroveTarget): Promise<string[
   return reasons;
 }
 
-async function checkLanded(target: GroveTarget): Promise<LandedCheck> {
+/**
+ * Decide whether an instance holds work, per G1. `fetch: false` compares against
+ * the remote-tracking refs already on disk instead of fetching, which is what the
+ * UI's WORK column uses: the same rules, at whatever freshness the last fetch left.
+ */
+export async function checkLanded(target: GroveTarget, options: { fetch?: boolean } = {}): Promise<LandedCheck> {
+  const withFetch = options.fetch ?? true;
   const instance = target.instance!;
   const instanceName = `${target.projectName}/${instance.name}`;
   const config = loadRepoConfig(target.project.source, target.project.configFile ?? GROVE_CONFIG_FILE);
@@ -142,7 +163,7 @@ async function checkLanded(target: GroveTarget): Promise<LandedCheck> {
     stash: 0,
   }));
 
-  const fetches = await Promise.all(repositories.map((repository) => fetchOriginBranch(repository)));
+  const fetches = await Promise.all(repositories.map((repository) => fetchOriginBranch(repository, withFetch)));
   const externalWorktrees: string[] = [];
   let unverifiable = false;
   for (let index = 0; index < repositories.length; index++) {
@@ -214,11 +235,19 @@ function listWorktrees(repository: ConfiguredRepository): WorktreeEntry[] {
 
 type FetchResult = { kind: "ok" } | { kind: "unverifiable"; detail: string };
 
-async function fetchOriginBranch(repository: ConfiguredRepository): Promise<FetchResult> {
+async function fetchOriginBranch(repository: ConfiguredRepository, withFetch = true): Promise<FetchResult> {
   try {
     git(repository.path, ["remote", "get-url", "origin"], repository.name, "finish");
   } catch {
     return { kind: "unverifiable", detail: "has no origin remote" };
+  }
+  if (!withFetch) {
+    try {
+      git(repository.path, ["rev-parse", "--verify", `origin/${repository.branch}`], repository.name, "finish");
+    } catch {
+      return { kind: "unverifiable", detail: `no local ref for origin/${repository.branch}` };
+    }
+    return { kind: "ok" };
   }
   const result = await runFetch(repository.path, repository.branch);
   if (result.kind === "timeout") return { kind: "unverifiable", detail: `fetch of origin/${repository.branch} exceeded 30 seconds` };

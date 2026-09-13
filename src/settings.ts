@@ -9,15 +9,22 @@ export interface GroveSettings {
   machine: string;
   /** After `grove stop` succeeds, kill the target's tmux session. */
   killTmuxSessionOnStop: boolean;
+  /**
+   * The command `grove ui` runs for its `O` key, with `${owner}` replaced by the
+   * row's `owner` label value. Empty means the key is not configured; grove
+   * substitutes the label into whatever the machine names here and reads nothing
+   * else about it.
+   */
+  openOwnerCommand: string[];
 }
 
 const MACHINE_PATTERN = /^[a-z0-9-]{1,16}$/;
 const DEFAULT_MACHINE = os.hostname().split(".")[0].toLowerCase().replace(/[^a-z0-9-]/g, "").slice(0, 16);
-const DEFAULTS: GroveSettings = { version: 1, machine: DEFAULT_MACHINE, killTmuxSessionOnStop: false };
+const DEFAULTS: GroveSettings = { version: 1, machine: DEFAULT_MACHINE, killTmuxSessionOnStop: false, openOwnerCommand: [] };
 
 export const SETTINGS_PATH = path.join(GROVE_DIR, "settings.json");
 
-export const SETTINGS_EXAMPLE = `{ "version": 1, "machine": "my-machine", "killTmuxSessionOnStop": false }`;
+export const SETTINGS_EXAMPLE = `{ "version": 1, "machine": "my-machine", "killTmuxSessionOnStop": false, "openOwnerCommand": ["my-tool", "open", "\${owner}"] }`;
 
 /**
  * Read `~/.grove/settings.json`. A missing file is the defaults; a malformed one
@@ -28,7 +35,7 @@ export function loadSettings(): GroveSettings {
     if (!MACHINE_PATTERN.test(DEFAULT_MACHINE)) {
       throw new Error(`could not derive a machine handle from hostname ${JSON.stringify(os.hostname())}; set machine in ${SETTINGS_PATH} to a string matching ${MACHINE_PATTERN}`);
     }
-    return { ...DEFAULTS };
+    return { ...DEFAULTS, openOwnerCommand: [...DEFAULTS.openOwnerCommand] };
   }
   let raw: unknown;
   try {
@@ -47,7 +54,7 @@ export function validateSettings(raw: unknown): GroveSettings {
   if (obj.version !== 1) {
     throw new Error(`${SETTINGS_PATH} version must be 1 (got ${JSON.stringify(obj.version)}). Expected ${SETTINGS_EXAMPLE}`);
   }
-  const settings: GroveSettings = { ...DEFAULTS };
+  const settings: GroveSettings = { ...DEFAULTS, openOwnerCommand: [...DEFAULTS.openOwnerCommand] };
   for (const [key, value] of Object.entries(obj)) {
     if (key === "version") continue;
     if (key === "machine") {
@@ -64,7 +71,14 @@ export function validateSettings(raw: unknown): GroveSettings {
       settings.killTmuxSessionOnStop = value;
       continue;
     }
-    throw new Error(`${SETTINGS_PATH} has unknown key "${key}" — allowed keys: version, machine, killTmuxSessionOnStop`);
+    if (key === "openOwnerCommand") {
+      if (!Array.isArray(value) || value.length === 0 || value.some((part) => typeof part !== "string" || part.length === 0)) {
+        throw new Error(`${SETTINGS_PATH} openOwnerCommand must be a non-empty array of non-empty strings (got ${JSON.stringify(value)})`);
+      }
+      settings.openOwnerCommand = value as string[];
+      continue;
+    }
+    throw new Error(`${SETTINGS_PATH} has unknown key "${key}" — allowed keys: version, machine, killTmuxSessionOnStop, openOwnerCommand`);
   }
   if (!MACHINE_PATTERN.test(settings.machine)) {
     throw new Error(`could not derive a machine handle from hostname ${JSON.stringify(os.hostname())}; set machine in ${SETTINGS_PATH} to a string matching ${MACHINE_PATTERN}`);

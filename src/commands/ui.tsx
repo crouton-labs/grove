@@ -1,7 +1,7 @@
 import { spawn } from "child_process";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Box, Text, render, useApp, useInput, useStdout } from "ink";
-import type { LifecycleRole } from "../config.js";
+import { loadRepoConfig, type GroveRepoConfig, type LifecycleRole } from "../config.js";
 import {
   fetchRepos,
   formatGitState,
@@ -11,10 +11,11 @@ import {
 } from "../inventory.js";
 import { captureChild, planLifecycle, runLifecycleCaptured, type LifecycleRun } from "../lifecycle.js";
 import { loadRegistry } from "../registry.js";
-import { loadSettings } from "../settings.js";
+import { SETTINGS_PATH, loadSettings } from "../settings.js";
 import { pendingResolution } from "../state.js";
 import { resolveTargetFromCwd, type GroveTarget } from "../target.js";
 import { killSessionOnStop, switchToSession } from "../tmux.js";
+import { checkLanded, countWork } from "./finish.js";
 import { isPoolReady } from "./pool.js";
 
 const LOG_LINES = 12;
@@ -29,6 +30,12 @@ const DETAIL_FIXED_ROWS = 2;
 const RESERVED_ROWS = CHROME_ROWS + DETAIL_FIXED_ROWS + 1;
 /** The STATE column: the longest reachable combination, `stale pool`, plus a trailing space. */
 const STATE_WIDTH = 12;
+/** The OWNER column: a node id is longer than this, so the cell truncates. */
+const OWNER_WIDTH = 14;
+/** The FRESH column: the longest reachable cell, `stale: unknown`, plus a trailing space. */
+const FRESH_WIDTH = 15;
+/** The WORK column: the longest reachable cell, `unverifiable`, plus a trailing space. */
+const WORK_WIDTH = 13;
 
 export async function ui(projectRef?: string): Promise<void> {
   try {
@@ -170,6 +177,85 @@ function pad(value: string, width: number): string {
   return value.length > width ? value.slice(0, width - 1) + "…" : value.padEnd(width);
 }
 
+// --- the owner, freshness, and work columns ---------------------------------
+
+/** One fixed-width table cell: its text and how it is coloured. */
+interface Cell {
+  text: string;
+  color?: string;
+  dim?: boolean;
+}
+
+const EMPTY_CELL: Cell = { text: "—", dim: true };
+const EMPTY_CELLS = { owner: EMPTY_CELL, freshness: EMPTY_CELL, work: EMPTY_CELL };
+
+/** The `owner` label, read from the recorded spec — a registry read, no git and no network. */
+function ownerCell(target: InventoryTarget): Cell {
+  const owner = target.spec?.labels.owner;
+  return owner ? { text: owner } : { text: "", dim: true };
+}
+
+/**
+ * Fresh when every configured repository is on its configured branch, not behind,
+ * not dirty, and the applied config is the source's. Read from the remote-tracking
+ * refs the last gather saw, so it costs no fetch; `R` is what makes them current.
+ * A stale instance names the first reason found, repository order first.
+ */
+function freshnessCell(target: InventoryTarget, config: GroveRepoConfig | null): Cell {
+  const configured = config?.repos;
+  if (!configured || Object.keys(configured).length === 0) return EMPTY_CELL;
+  const stale = (reason: string): Cell => ({ text: `stale: ${reason}`, color: "yellow" });
+  // Walked by the source config's repository names, not by what the gather found: an instance
+  // missing a configured repository, or one whose git state could not be read, is not fresh.
+  for (const [name, spec] of Object.entries(configured)) {
+    const repo = target.repos.find((candidate) => candidate.name === name);
+    if (!repo || repo.dirty === null) return stale("unknown");
+    if (repo.branch !== (spec.branch ?? "main")) return stale("branch");
+    if ((repo.behind ?? 0) > 0) return stale("behind");
+    if (repo.dirty) return stale("dirty");
+  }
+  if (target.configStale) return stale("config");
+  return { text: "fresh", color: "green" };
+}
+
+type WorkState =
+  | { kind: "pending" }
+  | { kind: "clean" }
+  | { kind: "unlanded"; count: number }
+  | { kind: "unverifiable" }
+  | { kind: "error"; message: string };
+
+function workKey(target: InventoryTarget): string {
+  return `${target.name}:${target.slot}`;
+}
+
+function workCell(state: WorkState | undefined): Cell {
+  switch (state?.kind) {
+    case "clean": return { text: "clean", color: "green" };
+    case "unlanded": return { text: `unlanded: ${state.count}`, color: "yellow" };
+    case "unverifiable": return { text: "unverifiable", dim: true };
+    case "error": return { text: "?", dim: true };
+    default: return { text: "…", dim: true };
+  }
+}
+
+/**
+ * What `grove finish` would find, with fetching disabled: the same landed check,
+ * so the column and the verb can only disagree about how current the remote refs
+ * are. Its git calls are synchronous, so the caller runs one instance at a time
+ * and lets the frame paint in between rather than gathering the whole fleet at once.
+ */
+async function computeWork(projectName: string, instance: InventoryTarget): Promise<WorkState> {
+  try {
+    const { result } = await checkLanded(toGroveTarget(projectName, false, instance), { fetch: false });
+    if (result.reason === "unverifiable") return { kind: "unverifiable" };
+    const count = countWork(result);
+    return count === 0 ? { kind: "clean" } : { kind: "unlanded", count };
+  } catch (error) {
+    return { kind: "error", message: (error as Error).message };
+  }
+}
+
 interface StateToken {
   text: string;
   color: string;
@@ -293,6 +379,7 @@ function App({ projectName }: { projectName: string }) {
   const [confirmation, setConfirmation] = useState<Confirmation | null>(null);
   const [prompt, setPrompt] = useState<Prompt | null>(null);
   const [help, setHelp] = useState(false);
+  const [work, setWork] = useState<Record<string, WorkState>>({});
   const [, setTick] = useState(0);
   const interrupt = useRef<(() => void) | null>(null);
 
@@ -319,6 +406,37 @@ function App({ projectName }: { projectName: string }) {
     const timer = setInterval(() => setTick((value) => value + 1), 1000);
     return () => clearInterval(timer);
   }, [running]);
+
+  // The source config decides each repository's configured branch, which the FRESH column compares
+  // against. It is read from the source rather than from an instance's copy, like every other
+  // decision grove makes from config.
+  const sourceConfig = useMemo(() => {
+    if (!project) return null;
+    try {
+      return loadRepoConfig(project.source, project.configFile);
+    } catch {
+      return null;
+    }
+  }, [project?.source, project?.configFile]);
+
+  // WORK is the landed check with fetching disabled, one instance at a time so a fleet of them
+  // cannot hold the frame: each row shows its previous answer, or …, until its own check returns.
+  // A pending or missing instance is skipped — its row shows the pending or zombie line instead.
+  useEffect(() => {
+    if (!project) return;
+    const instances = project.instances.filter((instance) => instance.exists && !instance.pending);
+    let cancelled = false;
+    setWork((current) => Object.fromEntries(instances.map((instance) => [workKey(instance), current[workKey(instance)] ?? { kind: "pending" }])));
+    void (async () => {
+      for (const instance of instances) {
+        const state = await computeWork(projectName, instance);
+        if (cancelled) return;
+        setWork((current) => ({ ...current, [workKey(instance)]: state }));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [project, projectName]);
 
   const terminalRows = stdout?.rows ?? 24;
   // The variable region is sized before the table, so the lines the selected row (or the help pane)
@@ -395,7 +513,7 @@ function App({ projectName }: { projectName: string }) {
       if (!row) return;
       if (!target) return setMessage(`slot ${row.slot} has no instance — press p to plant one.`);
       try {
-        planLifecycle(toGroveTarget(projectName, row, target), role);
+        planLifecycle(toGroveTarget(projectName, row.isSource, target), role);
       } catch (planError) {
         return setMessage((planError as Error).message);
       }
@@ -405,7 +523,7 @@ function App({ projectName }: { projectName: string }) {
         let groveTarget: GroveTarget;
         let plan;
         try {
-          groveTarget = toGroveTarget(projectName, row, target);
+          groveTarget = toGroveTarget(projectName, row.isSource, target);
           plan = planLifecycle(groveTarget, role);
         } catch (planError) {
           return setMessage((planError as Error).message);
@@ -632,6 +750,25 @@ function App({ projectName }: { projectName: string }) {
       }
       return exit();
     }
+    // Grove substitutes the row's owner label into a command the machine configured, and reads
+    // nothing else about either: it neither parses the label nor knows what the command opens.
+    if (input === "O") {
+      if (row.isSource) return setMessage("slot 0 is the project source — it carries no owner label.");
+      if (!target) return setMessage(`slot ${row.slot} has no instance — press p to plant one.`);
+      const owner = target.spec?.labels.owner;
+      if (!owner) return setMessage(`${targetRef} has no owner label — nothing to open.`);
+      const settings = safeSettings(setMessage);
+      if (!settings) return;
+      if (settings.openOwnerCommand.length === 0) {
+        return setMessage(`no openOwnerCommand in ${SETTINGS_PATH} — set it to a command array where \${owner} stands for the owner label.`);
+      }
+      const argv = settings.openOwnerCommand.map((part) => part.split("${owner}").join(owner));
+      return startAction(`open owner ${owner}`, argv.join(" "), (onLine) =>
+        captureChild(
+          spawn(argv[0], argv.slice(1), { stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, FORCE_COLOR: "0" } }),
+          onLine,
+        ));
+    }
   });
 
   if (error) {
@@ -662,9 +799,17 @@ function App({ projectName }: { projectName: string }) {
         <Text dimColor>{`  pool ${poolState.ready} ready · ${poolState.claimed} claimed`}</Text>
         <Text dimColor>{`  ${project.source}`}</Text>
       </Text>
-      <Text dimColor wrap="truncate-end">{` ${pad("SLOT", 6)}${pad("NAME", 13)}${pad("BRANCH", 19)}${pad("", 2)}${pad("SYNC", 12)}${pad("STATE", STATE_WIDTH)}SERVICES`}</Text>
+      <Text dimColor wrap="truncate-end">{` ${pad("SLOT", 6)}${pad("NAME", 13)}${pad("BRANCH", 19)}${pad("", 2)}${pad("SYNC", 12)}${pad("STATE", STATE_WIDTH)}${pad("OWNER", OWNER_WIDTH)}${pad("FRESH", FRESH_WIDTH)}${pad("WORK", WORK_WIDTH)}SERVICES`}</Text>
       {rows.map((entry, entryIndex) => (
-        <SlotRow key={entry.key} projectName={projectName} row={entry} selected={entryIndex === index} />
+        <SlotRow
+          key={entry.key}
+          projectName={projectName}
+          row={entry}
+          selected={entryIndex === index}
+          cells={entry.target && !entry.isSource
+            ? { owner: ownerCell(entry.target), freshness: freshnessCell(entry.target, sourceConfig), work: workCell(work[workKey(entry.target)]) }
+            : EMPTY_CELLS}
+        />
       ))}
       {hidden > 0 ? <Text dimColor wrap="truncate-end">{hiddenRowNotice(hidden)}</Text> : null}
       <Text dimColor>{"─".repeat(Math.max(10, width - 1))}</Text>
@@ -716,6 +861,8 @@ function App({ projectName }: { projectName: string }) {
         <Text dimColor={!instanceSelected}>l label</Text>
         <Text dimColor> · </Text>
         <Text dimColor={!instanceSelected}>L rm label</Text>
+        <Text dimColor> · </Text>
+        <Text dimColor={!instanceSelected || !target?.spec?.labels.owner}>O owner</Text>
       </Text>
       <Text wrap="truncate-end">
         <Text dimColor={!declares("start")}>s start</Text>
@@ -737,7 +884,17 @@ function App({ projectName }: { projectName: string }) {
   );
 }
 
-function SlotRow({ projectName, row, selected }: { projectName: string; row: Row; selected: boolean }) {
+function SlotRow({
+  projectName,
+  row,
+  selected,
+  cells,
+}: {
+  projectName: string;
+  row: Row;
+  selected: boolean;
+  cells: { owner: Cell; freshness: Cell; work: Cell };
+}) {
   const target = row.target;
   const name = row.isSource ? "(source)" : target?.name ?? "—";
   const cursor = selected ? "▸" : " ";
@@ -776,6 +933,9 @@ function SlotRow({ projectName, row, selected }: { projectName: string; row: Row
     <Text color={selected ? "cyan" : undefined} wrap="truncate-end">
       {`${head}${pad(aggregateBranch(target), 19)}${pad(aggregateDirty(target), 2)}${pad(aggregateSync(target), 12)}`}
       <StateCell tokens={stateTokens(target)} width={STATE_WIDTH} />
+      <ColumnCell cell={cells.owner} width={OWNER_WIDTH} />
+      <ColumnCell cell={cells.freshness} width={FRESH_WIDTH} />
+      <ColumnCell cell={cells.work} width={WORK_WIDTH} />
       {target.ports.map((port) => (
         <Text key={port.name}>
           {`${port.name}:${port.port} `}
@@ -785,6 +945,14 @@ function SlotRow({ projectName, row, selected }: { projectName: string; row: Row
       ))}
     </Text>
   );
+}
+
+/**
+ * A fixed-width cell. The text is padded to one column short of the width and a space follows it,
+ * so a value long enough to truncate — every node id is — still shows a gap before the next column.
+ */
+function ColumnCell({ cell, width }: { cell: Cell; width: number }) {
+  return <Text color={cell.color} dimColor={cell.dim}>{`${pad(cell.text, width - 1)} `}</Text>;
 }
 
 /**
@@ -1060,12 +1228,13 @@ function ActionPane({ action, budget, width }: { action: ActionState; budget: nu
 /** Every line fits an 80-column terminal and truncates rather than wraps, so the pane is exactly this many rows. */
 const HELP_LINES = [
   "keys — * confirms first · q or Esc quits · Ctrl-C interrupts an action",
-  "↑/k ↓/j move · 0-9 jump to a row · o tmux session · R fetch and re-read",
+  "↑/k ↓/j move · 0-9 jump to a row · o tmux · O owner · R fetch and re-read",
   "p plant · u uproot* · s start · S stop · r reset* · t status verb",
   "a apply the source config* · A apply over tracked changes* · b roll back*",
   "e release into the pool* · E release discarding repo changes*",
   "l add labels · L remove labels · project: c claim · P grow the pool*",
   "STATE: no-state state never applied · stale older config · pool ready",
+  "OWNER: the owner label · FRESH/WORK: read without fetching — R refreshes",
 ];
 
 /**
@@ -1086,12 +1255,12 @@ function HelpPane() {
 }
 
 /** Rebuild the registry-backed target a row stands for, refusing if the registry moved under us. */
-function toGroveTarget(projectName: string, row: Row, target: InventoryTarget): GroveTarget {
+function toGroveTarget(projectName: string, isSource: boolean, target: InventoryTarget): GroveTarget {
   const project = loadRegistry().projects[projectName];
   if (!project) throw new Error(`project "${projectName}" is no longer registered — press R to re-read.`);
   // The root comes from the registry just re-read, never from the gathered row, so a target that
   // moved while the UI was open runs where it is registered rather than where it used to be.
-  if (row.isSource) return { project, projectName, root: project.source };
+  if (isSource) return { project, projectName, root: project.source };
   const instance = project.instances.find((candidate) => candidate.name === target.name && candidate.slot === target.slot);
   if (!instance) throw new Error(`${projectName}/${target.name} is no longer registered — press R to re-read.`);
   return { project, projectName, root: instance.path, instance };
