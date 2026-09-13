@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { isWithinRoot } from "./config.js";
+import { loadCurrent } from "./current.js";
 import { loadRegistry } from "./registry.js";
 import { parseInstanceRef, pendingError, stateNotAppliedError } from "./state.js";
 import type { GroveInstance, GroveProjectConfig } from "./types.js";
@@ -12,7 +13,21 @@ export interface GroveTarget {
   instance?: GroveInstance;
 }
 
+export type TargetSource = "target" | "--instance" | "GROVE_INSTANCE" | "current directory" | "grove use";
+
+export interface ResolvedTarget {
+  target: GroveTarget;
+  source: TargetSource;
+}
+
 export class TargetNotFoundError extends Error {}
+export class TargetUsageError extends Error {}
+
+export function targetErrorExitCode(error: unknown): number {
+  if (error instanceof TargetUsageError) return 2;
+  if (error instanceof TargetNotFoundError) return 4;
+  return 1;
+}
 
 export function targetName(target: GroveTarget): string {
   return target.instance ? `${target.projectName}/${target.instance.name}` : target.projectName;
@@ -22,13 +37,49 @@ export function targetSlot(target: GroveTarget): number {
   return target.instance?.slot ?? 0;
 }
 
+/** Resolve a command target in the one documented G4 order. */
+export function resolveCommandTarget({
+  target,
+  instance,
+  cwd,
+  stdinIsTTY = process.stdin.isTTY === true,
+}: {
+  target?: string;
+  instance?: string;
+  cwd: string;
+  stdinIsTTY?: boolean;
+}): ResolvedTarget {
+  if (target && instance) throw new TargetUsageError("name the target once; use either [target] or --instance <target>");
+  if (target) return { target: resolveTargetFromRef(target), source: "target" };
+  if (instance) return { target: resolveTargetFromRef(instance), source: "--instance" };
+  if (process.env.GROVE_INSTANCE) return { target: resolveTargetFromRef(process.env.GROVE_INSTANCE), source: "GROVE_INSTANCE" };
+  const fromCwd = resolveTargetFromCwd(cwd);
+  if (fromCwd) return { target: fromCwd, source: "current directory" };
+  if (stdinIsTTY) {
+    const current = loadCurrent();
+    if (current) return { target: resolveTargetFromRef(current), source: "grove use" };
+  }
+  throw new TargetUsageError("no instance target resolved; pass --instance <target>");
+}
+
+/** Print the required G4 line from the one shared rendering function. */
+export function printResolvedTarget({ target, source }: ResolvedTarget): void {
+  console.log(`Instance: ${targetName(target)} (${source})`);
+}
+
+/** Legacy lower-level resolver retained for non-command callers. */
 export function resolveTarget({ at, cwd }: { at?: string; cwd: string }): GroveTarget | undefined {
   return at === undefined ? resolveTargetFromCwd(cwd) : resolveTargetFromRef(at);
 }
 
 export function resolveTargetFromCwd(cwd: string): GroveTarget | undefined {
   const registry = loadRegistry();
-  const resolvedCwd = fs.realpathSync(cwd);
+  let resolvedCwd: string;
+  try {
+    resolvedCwd = fs.realpathSync(cwd);
+  } catch {
+    return undefined;
+  }
   const candidates: Array<GroveTarget & { rootLength: number }> = [];
 
   for (const [projectName, project] of Object.entries(registry.projects)) {
@@ -57,9 +108,9 @@ export function resolveTargetFromRef(ref: string): GroveTarget {
     return { project, projectName, root: path.resolve(project.source) };
   }
 
-  const byName = project.instances.find((instance) => instance.name === instanceRef);
+  const byName = project.instances.find((candidate) => candidate.name === instanceRef);
   const bySlot = /^\d+$/.test(instanceRef)
-    ? project.instances.find((instance) => instance.slot === Number(instanceRef))
+    ? project.instances.find((candidate) => candidate.slot === Number(instanceRef))
     : undefined;
   if (byName && bySlot && byName !== bySlot) {
     throw new Error(`instance reference "${ref}" is ambiguous: "${instanceRef}" names ${projectName}/${byName.name} but slot ${instanceRef} is ${projectName}/${bySlot.name}. Use the unambiguous name.`);
@@ -87,7 +138,6 @@ export function assertTargetUsable(target: GroveTarget, allowedPending?: GroveIn
     throw new Error(`target directory does not exist: ${target.root} — run grove doctor`);
   }
 }
-
 
 function unknownProject(projectName: string, projects: Record<string, GroveProjectConfig>): TargetNotFoundError {
   const names = Object.keys(projects);

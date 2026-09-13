@@ -9,7 +9,7 @@ import { configuredRepositories } from "../revisions.js";
 import { stopInstanceServices } from "../process.js";
 import { regenerateAliases } from "../aliases.js";
 import { groveContextEnv, type GroveSibling } from "../context.js";
-import { runSequential, selectTargets, type TargetingOptions } from "../selection.js";
+import { announceSelectionTarget, runSequential, selectTargets, type TargetingOptions } from "../selection.js";
 import { pendingError } from "../state.js";
 import type { GroveTarget } from "../target.js";
 
@@ -34,8 +34,8 @@ export async function uproot(targetOrProject: string | undefined, options: Uproo
       throw new Error("uproot with a selector or --all requires --force");
     }
     process.exitCode = selection.fanOut
-      ? await runSequential(selection.targets, (target) => uprootTarget(target, options))
-      : await uprootTarget(selection.targets[0], options);
+      ? await runSequential(selection.targets, (target) => uprootTarget(target, options), selection.source)
+      : (announceSelectionTarget(selection.targets[0], selection.source), await uprootTarget(selection.targets[0], options));
   } catch (error) {
     console.error(`Error: ${(error as Error).message}`);
     process.exitCode = 1;

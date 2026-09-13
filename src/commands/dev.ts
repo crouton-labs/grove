@@ -3,39 +3,33 @@ import { spawnSync } from "child_process";
 import { GROVE_CONFIG_FILE, GROVE_CONFIG_EXAMPLE, loadRepoConfig, resolveDevCommand } from "../config.js";
 import { groveContextEnv } from "../context.js";
 import { computePorts } from "../ports.js";
-import { assertTargetUsable, resolveTarget, targetSlot } from "../target.js";
+import { assertTargetUsable, printResolvedTarget, resolveCommandTarget, targetSlot } from "../target.js";
 
 export function dev(args: string[]): void {
   try {
-    const { at, forwarded } = parseAt(args);
-    const target = resolveTarget({ at, cwd: process.cwd() });
-    if (!target) {
-      showOutsideProjectHelp(forwarded);
-      return;
-    }
-    assertTargetUsable(target);
-    const config = loadRepoConfig(target.root, target.project.configFile ?? GROVE_CONFIG_FILE);
-    if (!config?.devCommand) throw new Error(`no devCommand configured for ${target.root}`);
-
-    const command = resolveDevCommand(target.root, config.devCommand);
-    const slot = targetSlot(target);
+    const { target, instance, forwarded } = parseTarget(args);
+    const resolved = resolveCommandTarget({ target, instance, cwd: process.cwd() });
+    const groveTarget = resolved.target;
+    assertTargetUsable(groveTarget);
+    printResolvedTarget(resolved);
+    const config = loadRepoConfig(groveTarget.root, groveTarget.project.configFile ?? GROVE_CONFIG_FILE);
+    if (!config?.devCommand) throw new Error(`no devCommand configured for ${groveTarget.root}`);
+    const command = resolveDevCommand(groveTarget.root, config.devCommand);
+    const slot = targetSlot(groveTarget);
     const result = spawnSync(command, forwarded, {
-      cwd: target.root,
+      cwd: groveTarget.root,
       env: groveContextEnv({
-        projectName: target.projectName,
-        source: target.project.source,
-        target: target.root,
+        projectName: groveTarget.projectName,
+        source: groveTarget.project.source,
+        target: groveTarget.root,
         slot,
-        instanceName: target.instance?.name ?? target.projectName,
-        ports: computePorts(target.project.ports, slot),
+        instanceName: groveTarget.instance?.name ?? groveTarget.projectName,
+        ports: computePorts(groveTarget.project.ports, slot),
       }),
       stdio: "inherit",
     });
     if (result.error) throw new Error(`failed to run devCommand: ${result.error.message}`);
-    if (result.signal) {
-      process.exitCode = 128 + os.constants.signals[result.signal];
-      return;
-    }
+    if (result.signal) { process.exitCode = 128 + os.constants.signals[result.signal]; return; }
     process.exitCode = result.status ?? 1;
   } catch (error) {
     console.error(`Error: ${(error as Error).message}`);
@@ -43,20 +37,28 @@ export function dev(args: string[]): void {
   }
 }
 
-function parseAt(args: string[]): { at?: string; forwarded: string[] } {
-  if (args[0] === "--at") {
-    if (!args[1]) throw new Error("--at requires a target such as northlight/2");
-    return { at: args[1], forwarded: args.slice(2) };
+function parseTarget(args: string[]): { target?: string; instance?: string; forwarded: string[] } {
+  let target: string | undefined;
+  let instance: string | undefined;
+  let index = 0;
+  while (index < args.length) {
+    const value = args[index];
+    if (value === "--at" || value === "--instance") {
+      const next = args[index + 1];
+      if (!next) throw new Error(`${value} requires a target such as northlight/2`);
+      if (value === "--at") target = next; else instance = next;
+      index += 2;
+      continue;
+    }
+    if (value.startsWith("--at=")) { target = value.slice("--at=".length); index++; continue; }
+    if (value.startsWith("--instance=")) { instance = value.slice("--instance=".length); index++; continue; }
+    break;
   }
-  if (args[0]?.startsWith("--at=")) {
-    const at = args[0].slice("--at=".length);
-    if (!at) throw new Error("--at requires a target such as northlight/2");
-    return { at, forwarded: args.slice(1) };
-  }
-  return { forwarded: args };
+  if (target !== undefined && instance !== undefined) throw new Error("name the target once; use either --at or --instance <target>");
+  return { target, instance, forwarded: args.slice(index) };
 }
 
-function showOutsideProjectHelp(args: string[]): void {
+export function showOutsideProjectHelp(args: string[]): void {
   const help = args.includes("-h") || args.includes("--help");
   const out = help ? console.log : console.error;
   if (!help) out(`Error: current directory is outside a registered project root: ${process.cwd()}`);

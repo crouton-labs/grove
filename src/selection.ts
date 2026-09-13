@@ -1,10 +1,11 @@
 import { loadRegistry } from "./registry.js";
-import { resolveTarget, targetName, type GroveTarget } from "./target.js";
+import { TargetUsageError, printResolvedTarget, resolveCommandTarget, resolveTargetFromCwd, targetName, type GroveTarget, type TargetSource } from "./target.js";
 import type { GroveRegistry } from "./types.js";
 
 const LABEL_KEY = /^[a-z0-9._-]+$/;
 
 export interface TargetingOptions {
+  instance?: string;
   selector?: string;
   all?: boolean;
 }
@@ -12,6 +13,7 @@ export interface TargetingOptions {
 export interface TargetSelection {
   targets: GroveTarget[];
   fanOut: boolean;
+  source: TargetSource;
 }
 
 export interface SequentialTargetResult {
@@ -30,9 +32,7 @@ export function parseLabelAssignments(assignments: readonly string[]): Record<st
     if (!value || value.includes(",")) {
       throw new Error(`invalid label "${assignment}" — use key=value with a non-empty value that does not contain a comma`);
     }
-    if (Object.hasOwn(labels, key)) {
-      throw new Error(`label key "${key}" was given more than once`);
-    }
+    if (Object.hasOwn(labels, key)) throw new Error(`label key "${key}" was given more than once`);
     labels[key] = value;
   }
   return labels;
@@ -48,33 +48,25 @@ export function parseSelector(selector: string): Record<string, string> {
 }
 
 export function assertLabelKey(key: string, subject = `label key "${key}"`): void {
-  if (!LABEL_KEY.test(key)) {
-    throw new Error(`invalid ${subject} — keys must match [a-z0-9._-]+`);
-  }
+  if (!LABEL_KEY.test(key)) throw new Error(`invalid ${subject} — keys must match [a-z0-9._-]+`);
 }
 
-/** Resolve one explicit target, or a source-excluding selector/all target set. */
-export function selectTargets(
-  targetOrProject: string | undefined,
-  options: TargetingOptions,
-  cwd: string,
-): TargetSelection {
+/** Resolve one target through G4, or a source-excluding selector/all target set. */
+export function selectTargets(targetOrProject: string | undefined, options: TargetingOptions, cwd: string): TargetSelection {
   const hasSelector = options.selector !== undefined;
   const hasAll = options.all === true;
   if (hasSelector && hasAll) throw new Error("use either -l/--selector or --all, not both");
 
   if (!hasSelector && !hasAll) {
-    if (!targetOrProject) throw new Error("specify a target, a label selector (-l key=value), or --all");
-    const target = resolveTarget({ at: targetOrProject, cwd });
-    if (!target) throw new Error(`no registered project contains ${cwd}`);
-    return { targets: [target], fanOut: false };
+    const resolved = resolveCommandTarget({ target: targetOrProject, instance: options.instance, cwd });
+    return { targets: [resolved.target], fanOut: false, source: resolved.source };
   }
+  if (targetOrProject && options.instance) throw new TargetUsageError("name the target once; use either [target] or --instance <target>");
 
   const registry = loadRegistry();
-  const projectName = resolveSelectionProject(targetOrProject, cwd, registry.projects);
+  const projectName = resolveSelectionProject(targetOrProject ?? options.instance, cwd, registry.projects);
   const project = registry.projects[projectName];
   if (!project) throw new Error(`project "${projectName}" not registered`);
-
   const selector = hasSelector ? parseSelector(options.selector!) : undefined;
   const targets = project.instances
     .filter((instance) => !selector || Object.entries(selector).every(([key, value]) => instance.spec.labels[key] === value))
@@ -84,16 +76,15 @@ export function selectTargets(
     if (selector) throw new Error(`selector "${options.selector}" matched no instances in project "${projectName}"`);
     throw new Error(`--all matched no instances in project "${projectName}"`);
   }
-  return { targets, fanOut: true };
+  return { targets, fanOut: true, source: targetOrProject ? "target" : options.instance ? "--instance" : "current directory" };
 }
 
-/** Run targets in order, stop after the first failure, and print their final state. */
 /** Find the same registered instance after a fan-out wait or before a mutation. */
 export function currentRegisteredTarget(registry: GroveRegistry, target: GroveTarget): GroveTarget {
   const project = registry.projects[target.projectName];
   if (!project) throw new Error(`${targetName(target)} is no longer registered`);
   if (!target.instance) return { project, projectName: target.projectName, root: project.source };
-  const instance = project?.instances.find((candidate) =>
+  const instance = project.instances.find((candidate) =>
     candidate.name === target.instance!.name &&
     candidate.slot === target.instance!.slot &&
     candidate.path === target.instance!.path &&
@@ -103,23 +94,28 @@ export function currentRegisteredTarget(registry: GroveRegistry, target: GroveTa
   return { project, projectName: target.projectName, root: instance.path, instance };
 }
 
+export function announceSelectionTarget(target: GroveTarget, source: TargetSource): void {
+  printResolvedTarget({ target, source });
+}
+
+/** Run targets in order, stop after the first failure, and print their final state. */
 export async function runSequential(
   targets: readonly GroveTarget[],
   action: (target: GroveTarget) => number | Promise<number>,
+  source?: TargetSource,
 ): Promise<number> {
   const results: SequentialTargetResult[] = [];
   let failure: GroveTarget | undefined;
-
   for (const target of targets) {
     if (failure) {
       results.push({ target, status: "not-started" });
       continue;
     }
     try {
+      if (source) announceSelectionTarget(target, source);
       const exitCode = await action(target);
-      if (exitCode === 0) {
-        results.push({ target, status: "succeeded", exitCode });
-      } else {
+      if (exitCode === 0) results.push({ target, status: "succeeded", exitCode });
+      else {
         results.push({ target, status: "failed", exitCode });
         failure = target;
       }
@@ -129,7 +125,6 @@ export async function runSequential(
       failure = target;
     }
   }
-
   console.log("\nSummary:");
   for (const result of results) {
     const name = targetName(result.target);
@@ -140,18 +135,12 @@ export async function runSequential(
   return failure ? 1 : 0;
 }
 
-function resolveSelectionProject(
-  projectArgument: string | undefined,
-  cwd: string,
-  projects: Record<string, unknown>,
-): string {
+function resolveSelectionProject(projectArgument: string | undefined, cwd: string, projects: Record<string, unknown>): string {
   if (projectArgument) {
-    if (projectArgument.includes("/")) {
-      throw new Error(`selectors take an optional project name, not target "${projectArgument}"`);
-    }
+    if (projectArgument.includes("/")) throw new Error(`selectors take an optional project name, not target "${projectArgument}"`);
     return projectArgument;
   }
-  const fromCwd = resolveTarget({ cwd });
+  const fromCwd = resolveTargetFromCwd(cwd);
   if (fromCwd) return fromCwd.projectName;
   const names = Object.keys(projects);
   if (names.length === 1) return names[0];

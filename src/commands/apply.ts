@@ -7,11 +7,11 @@ import { groveContextEnv } from "../context.js";
 import { configHash } from "../intent.js";
 import { computePorts } from "../ports.js";
 import { saveRegistry, withRegistryLock } from "../registry.js";
-import { currentRegisteredTarget, runSequential, selectTargets, type TargetingOptions } from "../selection.js";
+import { announceSelectionTarget, currentRegisteredTarget, runSequential, selectTargets, type TargetingOptions } from "../selection.js";
 import { loadSettings } from "../settings.js";
 import { applyExistingCheckoutSetup, describeAppliedCode } from "../setup.js";
 import { activePendingOperationError, isPendingInstanceOperationActive } from "../state.js";
-import { assertTargetUsable, type GroveTarget, targetSlot } from "../target.js";
+import { assertTargetUsable, targetErrorExitCode, type GroveTarget, targetSlot } from "../target.js";
 import { recordApplied, type GroveInstance } from "../types.js";
 
 interface ApplyOptions extends TargetingOptions {
@@ -34,11 +34,11 @@ export async function apply(targetOrProject: string | undefined, options: ApplyO
   try {
     const selection = selectTargets(targetOrProject, options, process.cwd());
     process.exitCode = selection.fanOut
-      ? await runSequential(selection.targets, (target) => applyTarget(target, options))
-      : await applyTarget(selection.targets[0], options);
+      ? await runSequential(selection.targets, (target) => applyTarget(target, options), selection.source)
+      : (announceSelectionTarget(selection.targets[0], selection.source), await applyTarget(selection.targets[0], options));
   } catch (error) {
     console.error(`Error: ${(error as Error).message}`);
-    process.exitCode = 1;
+    process.exitCode = targetErrorExitCode(error);
   }
 }
 

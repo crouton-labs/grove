@@ -29,6 +29,7 @@ import { ui } from "./commands/ui.js";
 import { pool } from "./commands/pool.js";
 import { claim } from "./commands/claim.js";
 import { release } from "./commands/release.js";
+import { current, use } from "./commands/current.js";
 import { noticeIfUpdateAvailable } from "./update-notice.js";
 import { SECRET_ENV_HELP } from "./env.js";
 
@@ -152,8 +153,9 @@ program
   .action(claim);
 
 program
-  .command("release <target>")
+  .command("release [target]")
   .description("Return one instance to its configured code, baseline state, and ready pool")
+  .option("--instance <target>", "Target one instance instead of using [target]")
   .option("--force", "Discard tracked and untracked repository changes before release")
   .addHelpText("after", "\nRelease refuses tracked or untracked changes in configured repositories. --force runs git reset --hard and git clean -fd in every configured repository, then fast-forwards configured branches, resets data state, applies the project configuration, drops all labels, and sets grove.pool=ready in one final save. If interrupted before that save, the releasing reservation and existing labels remain; re-run grove release <target> to finish it. If it reports repository changes, run grove release <target> --force.\n")
   .action(release);
@@ -161,6 +163,7 @@ program
 program
   .command("apply [target-or-project]")
   .description("Reapply the source config to one target or a selected instance set")
+  .option("--instance <target>", "Target one instance instead of using [target]")
   .option("-l, --selector <key=value[,key=value]>", "Select instances whose labels all match")
   .option("--all", "Select every planted instance")
   .option("--force", "Apply even when a target repo has tracked changes")
@@ -176,20 +179,23 @@ program
   .action(rollout);
 
 program
-  .command("rollback <target>")
+  .command("rollback [target]")
   .description("Move one instance back to its previous recorded revision and apply it")
+  .option("--instance <target>", "Target one instance instead of using [target]")
   .addHelpText("after", `\nRollback accepts one planted target only. It refuses tracked repository changes and requires at least two recorded revisions. It checks out every configured repository at the previous revision's recorded commit, reruns apply, and records the rollback with the timestamp it rolled back from.\n`)
   .action(rollback);
 
 program
-  .command("snapshot <project/instance> <name>")
+  .command("snapshot [target] <name>")
   .description("Capture an instance's state into the snapshot store")
+  .option("--instance <target>", "Target one instance instead of using [target]")
   .option("--force", "Replace an existing snapshot of the same name")
   .action(snapshot);
 
 program
   .command("restore [target-or-project] [ref]")
   .description("Load a state ref into one target or a selected instance set")
+  .option("--instance <target>", "Target one instance instead of using [target]")
   .option("-l, --selector <key=value[,key=value]>", "Select instances whose labels all match")
   .option("--all", "Select every planted instance")
   .option("--force", "Skip confirmation prompt")
@@ -206,6 +212,7 @@ program
 program
   .command("uproot [target-or-project]")
   .description("Tear down one target or a selected instance set and remove it from registry")
+  .option("--instance <target>", "Target one instance instead of using [target]")
   .option("-l, --selector <key=value[,key=value]>", "Select instances whose labels all match")
   .option("--all", "Select every planted instance")
   .option("--force", "Skip confirmation prompt; required with -l or --all")
@@ -231,8 +238,21 @@ program
   .action((project: string | undefined, options: { json?: boolean }) => list(project, options));
 
 program
+  .command("use [target]")
+  .description("Set the current instance for interactive commands")
+  .option("--clear", "Clear the current instance")
+  .action(use);
+
+program
+  .command("current")
+  .description("Print the current instance")
+  .option("--json", "Print machine-readable current instance data")
+  .action(current);
+
+program
   .command("open [target]")
   .description("Print a target's absolute path")
+  .option("--instance <target>", "Target one instance instead of using [target]")
   .option("--json", "Print target identity and path as JSON")
   .action(open);
 
@@ -245,6 +265,7 @@ for (const [name, description, action] of [
   program
     .command(`${name} [target-or-project]`)
     .description(`${description} for one target or a selected instance set`)
+    .option("--instance <target>", "Target one instance instead of using [target]")
     .option("-l, --selector <key=value[,key=value]>", "Select instances whose labels all match")
     .option("--all", "Select every planted instance")
     .addHelpText("after", `\n${TARGETING_HELP}\n`)
@@ -254,6 +275,7 @@ for (const [name, description, action] of [
 program
   .command("label [target-or-project] [key=value...]")
   .description("Add or remove labels on one target or a selected instance set")
+  .option("--instance <target>", "Target one instance instead of using [target]")
   .option("-l, --selector <key=value[,key=value]>", "Select instances whose labels all match")
   .option("--all", "Select every planted instance")
   .option("--rm <key>", "Remove a label key; repeatable", collectString, [])

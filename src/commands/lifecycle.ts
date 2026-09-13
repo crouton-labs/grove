@@ -1,7 +1,7 @@
 import { dispatchLifecycle } from "../lifecycle.js";
 import { loadSettings } from "../settings.js";
 import { withRegistryLock } from "../registry.js";
-import { currentRegisteredTarget, runSequential, selectTargets, type TargetingOptions } from "../selection.js";
+import { announceSelectionTarget, currentRegisteredTarget, runSequential, selectTargets, type TargetingOptions } from "../selection.js";
 import { type LifecycleRole } from "../config.js";
 import { killSessionOnStop } from "../tmux.js";
 
@@ -23,8 +23,8 @@ export async function runLifecycleCommand(
       return exitCode;
     };
     process.exitCode = selection.fanOut
-      ? await runSequential(selection.targets, action)
-      : await action(selection.targets[0]);
+      ? await runSequential(selection.targets, action, selection.source)
+      : (announceSelectionTarget(selection.targets[0], selection.source), await action(selection.targets[0]));
   } catch (error) {
     console.error(`Error: ${(error as Error).message}`);
     process.exitCode = 1;

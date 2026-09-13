@@ -1,5 +1,5 @@
 import { saveRegistry, withRegistryLock } from "../registry.js";
-import { assertLabelKey, currentRegisteredTarget, parseLabelAssignments, runSequential, selectTargets, type TargetingOptions } from "../selection.js";
+import { announceSelectionTarget, assertLabelKey, currentRegisteredTarget, parseLabelAssignments, runSequential, selectTargets, type TargetingOptions } from "../selection.js";
 import { assertTargetUsable, type GroveTarget } from "../target.js";
 
 interface LabelOptions extends TargetingOptions {
@@ -29,8 +29,8 @@ export async function label(
     }
     const selection = selectTargets(scope, options, process.cwd());
     process.exitCode = selection.fanOut
-      ? await runSequential(selection.targets, (target) => labelTarget(target, parsedAssignments, remove))
-      : await labelTarget(selection.targets[0], parsedAssignments, remove);
+      ? await runSequential(selection.targets, (target) => labelTarget(target, parsedAssignments, remove), selection.source)
+      : (announceSelectionTarget(selection.targets[0], selection.source), await labelTarget(selection.targets[0], parsedAssignments, remove));
   } catch (error) {
     console.error(`Error: ${(error as Error).message}`);
     process.exitCode = 1;

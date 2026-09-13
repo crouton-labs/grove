@@ -2,7 +2,7 @@ import { execFileSync, spawn } from "child_process";
 import fs from "fs";
 import path from "path";
 import { GROVE_CONFIG_FILE, isWithinRoot, loadRepoConfig } from "../config.js";
-import { TargetNotFoundError, resolveTargetFromRef, type GroveTarget } from "../target.js";
+import { TargetNotFoundError, TargetUsageError, printResolvedTarget, resolveCommandTarget, type GroveTarget } from "../target.js";
 import { configuredRepositories, type ConfiguredRepository } from "../revisions.js";
 import { withRegistryLock } from "../registry.js";
 import { configHash } from "../intent.js";
@@ -58,13 +58,12 @@ export function countWork(result: FinishResult): number {
 }
 
 export async function finish(targetRef: string | undefined, options: { instance?: string; owner?: string; json?: boolean; selector?: string; all?: boolean }): Promise<void> {
-  const instanceName = targetRef ?? options.instance;
   try {
-    if (targetRef && options.instance) throw usageError("name the target once; use either [target] or --instance <target>");
     if (options.selector !== undefined || options.all) throw usageError("grove finish accepts one target only; selectors and --all are not supported");
-    if (!instanceName) throw usageError("grove finish needs a target; pass [target] or --instance <target>");
-    const target = resolveTargetFromRef(instanceName);
+    const resolved = resolveCommandTarget({ target: targetRef, instance: options.instance, cwd: process.cwd() });
+    const target = resolved.target;
     if (!target.instance) throw usageError(`${target.projectName} is the project source; grove finish needs a planted instance`);
+    if (!options.json) printResolvedTarget(resolved);
 
     const result = await finishTarget(target, options.owner);
     if (options.json) {
@@ -307,7 +306,7 @@ function printRefusal(result: FinishResult): void {
 class UsageError extends Error {}
 function usageError(message: string): UsageError { return new UsageError(message); }
 function exitCode(error: unknown): number {
-  if (error instanceof UsageError) return 2;
+  if (error instanceof UsageError || error instanceof TargetUsageError) return 2;
   if (error instanceof TargetNotFoundError) return 4;
   return 1;
 }

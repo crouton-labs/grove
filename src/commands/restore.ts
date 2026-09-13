@@ -1,7 +1,7 @@
 import { randomUUID } from "crypto";
 import { saveRegistry, withRegistryLock } from "../registry.js";
 import { confirm } from "../prompt.js";
-import { currentRegisteredTarget, runSequential, selectTargets, type TargetingOptions } from "../selection.js";
+import { announceSelectionTarget, currentRegisteredTarget, runSequential, selectTargets, type TargetingOptions } from "../selection.js";
 import {
   describeRef,
   instanceContext,
@@ -27,13 +27,16 @@ export async function restore(
 ): Promise<void> {
   try {
     const selecting = options.selector !== undefined || options.all === true;
-    const stateRef = selecting && refOrUndefined === undefined ? targetOrProject : refOrUndefined;
-    const scope = selecting && refOrUndefined === undefined ? undefined : targetOrProject;
+    if (options.instance && refOrUndefined !== undefined) throw new Error("name the target once; use either [target] or --instance <target>");
+    const stateRef = options.instance
+      ? targetOrProject
+      : selecting && refOrUndefined === undefined ? targetOrProject : refOrUndefined;
+    const scope = options.instance ? undefined : selecting && refOrUndefined === undefined ? undefined : targetOrProject;
     if (!stateRef) throw new Error("specify the state ref to restore");
     const selection = selectTargets(scope, options, process.cwd());
     process.exitCode = selection.fanOut
-      ? await runSequential(selection.targets, (target) => restoreTarget(target, stateRef, options))
-      : await restoreTarget(selection.targets[0], stateRef, options);
+      ? await runSequential(selection.targets, (target) => restoreTarget(target, stateRef, options), selection.source)
+      : (announceSelectionTarget(selection.targets[0], selection.source), await restoreTarget(selection.targets[0], stateRef, options));
   } catch (error) {
     console.error(`Error: ${(error as Error).message}`);
     process.exitCode = 1;
