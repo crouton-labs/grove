@@ -1,6 +1,6 @@
 import path from "path";
 import fs from "fs";
-import { execSync } from "child_process";
+import { execFileSync, execSync } from "child_process";
 import { PortDef, type GroveApplied } from "./types.js";
 import {
   CopyFromSourceSpec,
@@ -81,41 +81,30 @@ function isSlotEnvFile(target: string, filePath: string): boolean {
   return path.resolve(filePath) === path.resolve(target, ".grove", "env");
 }
 
-/** Recursively copy `src` to `dest`, returning the number of copied file entries. */
-function copyRecursive(src: string, dest: string, target: string): number {
-  if (isSlotEnvFile(target, dest)) {
-    console.log("  Skipping protected slot env file");
-    return 0;
+function carriesSlotEnvFile(src: string, dest: string, target: string): boolean {
+  const relative = path.relative(dest, path.join(target, ".grove", "env"));
+  if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    return false;
   }
-  let lstat: fs.Stats;
   try {
-    lstat = fs.lstatSync(src);
+    fs.lstatSync(path.join(src, relative));
+    return true;
   } catch {
-    console.log(`  Warning: cannot stat ${src}, skipping`);
-    return 0;
+    return false;
   }
+}
 
-  if (lstat.isSymbolicLink()) {
-    fs.rmSync(dest, { recursive: true, force: true });
-    fs.symlinkSync(fs.readlinkSync(src), dest);
-    return 1;
-  }
-
-  if (lstat.isDirectory()) {
-    fs.mkdirSync(dest, { recursive: true });
-    let copied = 0;
-    for (const entry of fs.readdirSync(src)) {
-      copied += copyRecursive(path.join(src, entry), path.join(dest, entry), target);
+function removeSlotEnvFile(target: string): void {
+  const groveDir = path.join(target, ".grove");
+  try {
+    if (fs.lstatSync(groveDir).isSymbolicLink()) {
+      fs.unlinkSync(groveDir);
+      return;
     }
-    return copied;
+  } catch {
+    return;
   }
-
-  if (lstat.isFile()) {
-    fs.copyFileSync(src, dest, fs.constants.COPYFILE_FICLONE);
-    return 1;
-  }
-
-  return 0;
+  fs.rmSync(path.join(groveDir, "env"), { recursive: true, force: true });
 }
 
 // ---------------------------------------------------------------------------
@@ -419,19 +408,20 @@ export function copyFromSource(
       console.log(`  Skipping copy: ${spec.from} (not found in source)`);
       continue;
     }
-    if (isSlotEnvFile(target, dest)) {
-      console.log("  Skipping protected slot env file");
-      continue;
-    }
-
     fs.mkdirSync(path.dirname(dest), { recursive: true });
-
-    const copied = copyRecursive(src, dest, target);
-    if (stat.isDirectory()) {
-      console.log(`  Copied ${path.relative(target, dest)} (${copied} file(s))`);
-    } else {
-      console.log(`  Rewrote ${path.relative(target, dest)}`);
+    const copySource = stat.isDirectory() ? `${src}/.` : src;
+    execFileSync(
+      "cp",
+      process.platform === "darwin"
+        ? ["-Rc", copySource, dest]
+        : ["-R", "--reflink=auto", copySource, dest],
+      { stdio: "inherit" },
+    );
+    if (carriesSlotEnvFile(src, dest, target)) {
+      removeSlotEnvFile(target);
+      console.log("  Skipping protected slot env file");
     }
+    console.log(`  Copied ${spec.from}`);
 
     if (spec.patchPorts) {
       if (stat.isDirectory()) {
