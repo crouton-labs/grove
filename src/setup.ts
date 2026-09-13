@@ -56,21 +56,26 @@ export function matchGlob(filePath: string, pattern: string): boolean {
   );
 }
 
-/** Recursively list all files under `dir`, returning paths relative to `dir`. */
+/**
+ * List every file under `dir` as an absolute path. Iterative on purpose: a built
+ * instance holds hundreds of thousands of files under node_modules, and a
+ * recursive walk that spreads each subtree into its parent overflows the stack.
+ */
 function walkDir(dir: string): string[] {
   const results: string[] = [];
-  let entries: fs.Dirent[];
-  try {
-    entries = fs.readdirSync(dir, { withFileTypes: true });
-  } catch {
-    return results;
-  }
-  for (const entry of entries) {
-    const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) {
-      results.push(...walkDir(full));
-    } else if (entry.isFile()) {
-      results.push(full);
+  const pending = [dir];
+  while (pending.length) {
+    const current = pending.pop()!;
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(current, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      const full = path.join(current, entry.name);
+      if (entry.isDirectory()) pending.push(full);
+      else if (entry.isFile()) results.push(full);
     }
   }
   return results;
