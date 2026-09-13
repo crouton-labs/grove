@@ -32,8 +32,8 @@ const RESERVED_ROWS = CHROME_ROWS + DETAIL_FIXED_ROWS + 1;
 const STATE_WIDTH = 12;
 /** The OWNER column: a node id is longer than this, so the cell truncates. */
 const OWNER_WIDTH = 14;
-/** The FRESH column: the longest reachable cell, `stale: unknown`, plus a trailing space. */
-const FRESH_WIDTH = 15;
+/** The FRESH column: the longest reachable cell, `stale: no upstream`, plus a trailing space. */
+const FRESH_WIDTH = 19;
 /** The WORK column: the longest reachable cell, `unverifiable`, plus a trailing space. */
 const WORK_WIDTH = 13;
 
@@ -211,7 +211,10 @@ function freshnessCell(target: InventoryTarget, config: GroveRepoConfig | null):
     const repo = target.repos.find((candidate) => candidate.name === name);
     if (!repo || repo.dirty === null) return stale("unknown");
     if (repo.branch !== (spec.branch ?? "main")) return stale("branch");
-    if ((repo.behind ?? 0) > 0) return stale("behind");
+    // Null ahead/behind means the branch has no upstream, so the inventory cannot show it is not
+    // behind. Coercing that to zero would report fresh from an unanswered question.
+    if (repo.ahead === null || repo.behind === null) return stale("no upstream");
+    if (repo.behind > 0) return stale("behind");
     if (repo.dirty) return stale("dirty");
   }
   if (target.configStale) return stale("config");

@@ -3,7 +3,7 @@ import { spawnSync } from "child_process";
 import { GROVE_CONFIG_FILE, GROVE_CONFIG_EXAMPLE, loadRepoConfig, resolveDevCommand } from "../config.js";
 import { groveContextEnv } from "../context.js";
 import { computePorts } from "../ports.js";
-import { assertTargetUsable, printResolvedTarget, resolveCommandTarget, targetSlot } from "../target.js";
+import { assertTargetUsable, printResolvedTarget, resolveCommandTarget, TargetUsageError, targetErrorExitCode, targetSlot } from "../target.js";
 
 export function dev(args: string[]): void {
   try {
@@ -33,7 +33,7 @@ export function dev(args: string[]): void {
     process.exitCode = result.status ?? 1;
   } catch (error) {
     console.error(`Error: ${(error as Error).message}`);
-    process.exitCode = 1;
+    process.exitCode = targetErrorExitCode(error);
   }
 }
 
@@ -54,7 +54,7 @@ function parseTarget(args: string[]): { target?: string; instance?: string; forw
     if (value.startsWith("--instance=")) { instance = value.slice("--instance=".length); index++; continue; }
     break;
   }
-  if (target !== undefined && instance !== undefined) throw new Error("name the target once; use either --at or --instance <target>");
+  if (target !== undefined && instance !== undefined) throw new TargetUsageError("name the target once; use either --at or --instance <target>");
   return { target, instance, forwarded: args.slice(index) };
 }
 

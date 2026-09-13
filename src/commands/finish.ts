@@ -93,7 +93,7 @@ export async function finishTarget(target: GroveTarget, owner?: string): Promise
   if (check.result.reason) return check.result;
 
   try {
-    await uprootTarget(target, { force: true, owner, externalWorktrees: check.externalWorktrees, quiet: true });
+    await uprootTarget(target, { force: true, owner, externalWorktrees: check.externalWorktrees, quiet: true, teardownFailure: "abort" });
     return { ...check.result, finished: true };
   } catch (error) {
     if (error instanceof OwnerChangedError) {
@@ -171,21 +171,21 @@ export async function checkLanded(target: GroveTarget, options: { fetch?: boolea
     const fetched = fetches[index];
     if (fetched.kind !== "ok") {
       unverifiable = true;
-      continue;
-    }
-    report.originSha = git(repository.path, ["rev-parse", `origin/${repository.branch}`], repository.name, "finish");
-    const branchNames = git(repository.path, ["for-each-ref", "--format=%(refname:short)", "refs/heads"], repository.name, "finish")
-      .split("\n").filter(Boolean);
-    for (const branch of branchNames) {
-      const unlanded = cherry(repository, `origin/${repository.branch}`, branch);
-      if (unlanded.length) report.branches.push({ name: branch, unlanded });
+    } else {
+      report.originSha = git(repository.path, ["rev-parse", `origin/${repository.branch}`], repository.name, "finish");
+      const branchNames = git(repository.path, ["for-each-ref", "--format=%(refname:short)", "refs/heads"], repository.name, "finish")
+        .split("\n").filter(Boolean);
+      for (const branch of branchNames) {
+        const unlanded = cherry(repository, `origin/${repository.branch}`, branch);
+        if (unlanded.length) report.branches.push({ name: branch, unlanded });
+      }
     }
 
     const worktrees = listWorktrees(repository);
     for (const worktree of worktrees) {
       if (!isWithinRoot(path.resolve(instance.path), path.resolve(worktree.path))) externalWorktrees.push(worktree.path);
       if (!fs.existsSync(worktree.path)) continue;
-      if (worktree.detached) {
+      if (fetched.kind === "ok" && worktree.detached) {
         const unlanded = cherry(repository, `origin/${repository.branch}`, "HEAD", worktree.path);
         if (unlanded.length) report.branches.push({ name: `HEAD (${worktree.path})`, unlanded });
       }

@@ -1,7 +1,7 @@
 import { GROVE_CONFIG_FILE, loadRepoConfig } from "../config.js";
 import { assertConfiguredRepositoriesClean, configuredRepositories, discardConfiguredRepositoryChanges, fastForwardConfiguredRepositories } from "../revisions.js";
 import { hasStateCommand, instanceContext, resetState } from "../state.js";
-import { printResolvedTarget, resolveCommandTarget, targetName, type GroveTarget } from "../target.js";
+import { printResolvedTarget, resolveCommandTarget, targetErrorExitCode, targetName, type GroveTarget } from "../target.js";
 import { applyTarget } from "./apply.js";
 import { reserveRevisionOperation } from "./revision-operation.js";
 
@@ -32,7 +32,7 @@ export async function release(targetRef: string | undefined, options: ReleaseOpt
     console.log(`Released: ${targetName(reservation.target)}`);
   } catch (error) {
     console.error(`Error: ${(error as Error).message}`);
-    process.exitCode = 1;
+    process.exitCode = targetErrorExitCode(error);
   }
 }
 

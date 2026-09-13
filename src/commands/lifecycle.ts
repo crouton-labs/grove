@@ -4,6 +4,7 @@ import { withRegistryLock } from "../registry.js";
 import { announceSelectionTarget, currentRegisteredTarget, runSequential, selectTargets, type TargetingOptions } from "../selection.js";
 import { type LifecycleRole } from "../config.js";
 import { killSessionOnStop } from "../tmux.js";
+import { targetErrorExitCode } from "../target.js";
 
 export async function runLifecycleCommand(
   role: LifecycleRole,
@@ -27,6 +28,6 @@ export async function runLifecycleCommand(
       : (announceSelectionTarget(selection.targets[0], selection.source), await action(selection.targets[0]));
   } catch (error) {
     console.error(`Error: ${(error as Error).message}`);
-    process.exitCode = 1;
+    process.exitCode = targetErrorExitCode(error);
   }
 }

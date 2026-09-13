@@ -1,6 +1,6 @@
 import { saveRegistry, withRegistryLock } from "../registry.js";
 import { announceSelectionTarget, assertLabelKey, currentRegisteredTarget, parseLabelAssignments, runSequential, selectTargets, type TargetingOptions } from "../selection.js";
-import { assertTargetUsable, type GroveTarget } from "../target.js";
+import { assertTargetUsable, targetErrorExitCode, type GroveTarget } from "../target.js";
 
 interface LabelOptions extends TargetingOptions {
   rm?: string[];
@@ -33,7 +33,7 @@ export async function label(
       : (announceSelectionTarget(selection.targets[0], selection.source), await labelTarget(selection.targets[0], parsedAssignments, remove));
   } catch (error) {
     console.error(`Error: ${(error as Error).message}`);
-    process.exitCode = 1;
+    process.exitCode = targetErrorExitCode(error);
   }
 }
 

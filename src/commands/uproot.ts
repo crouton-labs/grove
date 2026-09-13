@@ -11,7 +11,7 @@ import { regenerateAliases } from "../aliases.js";
 import { groveContextEnv, type GroveSibling } from "../context.js";
 import { announceSelectionTarget, runSequential, selectTargets, type TargetingOptions } from "../selection.js";
 import { pendingError } from "../state.js";
-import type { GroveTarget } from "../target.js";
+import { TargetNotFoundError, targetErrorExitCode, type GroveTarget } from "../target.js";
 
 interface UprootOptions extends TargetingOptions {
   force?: boolean;
@@ -25,6 +25,7 @@ interface UprootTargetOptions {
   owner?: string;
   externalWorktrees?: string[];
   quiet?: boolean;
+  teardownFailure?: "abort";
 }
 
 export async function uproot(targetOrProject: string | undefined, options: UprootOptions): Promise<void> {
@@ -38,7 +39,7 @@ export async function uproot(targetOrProject: string | undefined, options: Uproo
       : (announceSelectionTarget(selection.targets[0], selection.source), await uprootTarget(selection.targets[0], options));
   } catch (error) {
     console.error(`Error: ${(error as Error).message}`);
-    process.exitCode = 1;
+    process.exitCode = targetErrorExitCode(error);
   }
 }
 
@@ -102,7 +103,7 @@ export async function uprootTarget(target: GroveTarget, options: UprootTargetOpt
       candidate.created === instance.created,
     ) ?? -1;
     if (!currentProject || currentIndex === -1) {
-      throw new Error(`${project}/${instanceName} is no longer registered`);
+      throw new TargetNotFoundError(`${project}/${instanceName} is no longer registered`);
     }
     const currentInstance = currentProject.instances[currentIndex];
     if (currentInstance.pending === "applying" || currentInstance.pending === "restoring" || currentInstance.pending === "releasing" || currentInstance.pending === "rolling-out" || currentInstance.pending === "rolling-back") {
@@ -123,18 +124,18 @@ export async function uprootTarget(target: GroveTarget, options: UprootTargetOpt
     ].sort((a, b) => a.slot - b.slot || a.name.localeCompare(b.name) || a.path.localeCompare(b.path));
   });
 
-  if (teardownPath) {
-    contextEnv = groveContextEnv({
-      projectName: project,
-      source: proj.source,
-      target: instance.path,
-      slot: instance.slot,
-      instanceName,
-      ports,
-    }, process.env, undefined, siblings);
-  }
-
   try {
+    if (teardownPath) {
+      contextEnv = groveContextEnv({
+        projectName: project,
+        source: proj.source,
+        target: instance.path,
+        slot: instance.slot,
+        instanceName,
+        ports,
+      }, process.env, undefined, siblings);
+    }
+
     log("\nStopping services...");
     const { killed, portsFreed } = await stopInstanceServices(instance.path, ports, log);
     if (killed > 0) {
@@ -154,7 +155,10 @@ export async function uprootTarget(target: GroveTarget, options: UprootTargetOpt
           cwd: instance.path,
           env: contextEnv,
         });
-      } catch {
+      } catch (failure) {
+        if (options.teardownFailure === "abort") {
+          throw new Error(`teardown script failed: ${(failure as Error).message}`);
+        }
         error("  Warning: teardown script failed.");
       }
     }
@@ -176,18 +180,36 @@ export async function uprootTarget(target: GroveTarget, options: UprootTargetOpt
         candidate.created === instance.created,
       ) ?? -1;
       if (!currentProject || currentIndex === -1) {
-        throw new Error(`${project}/${instanceName} is no longer registered`);
+        throw new TargetNotFoundError(`${project}/${instanceName} is no longer registered`);
       }
       currentProject.instances.splice(currentIndex, 1);
       await saveRegistry(currentRegistry);
       regenerateAliases(currentRegistry);
     });
   } catch (error) {
-    throw new Error((error as Error).message);
+    if (fs.existsSync(instance.path)) await releaseUprootReservation(target);
+    throw error;
   }
 
   log(`\nUprooted ${project}/${instanceName}.`);
   return 0;
+}
+
+async function releaseUprootReservation(target: GroveTarget): Promise<void> {
+  const instance = target.instance!;
+  await withRegistryLock(async (registry) => {
+    const project = registry.projects[target.projectName];
+    const current = project?.instances.find((candidate) =>
+      candidate.name === instance.name &&
+      candidate.slot === instance.slot &&
+      candidate.path === instance.path &&
+      candidate.created === instance.created,
+    );
+    if (!current) throw new TargetNotFoundError(`${target.projectName}/${instance.name} is no longer registered`);
+    delete current.pending;
+    delete current.uprootWorktrees;
+    await saveRegistry(registry);
+  });
 }
 
 /** Git itself reports the only worktrees Grove is allowed to remove. */

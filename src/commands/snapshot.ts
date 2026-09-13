@@ -1,4 +1,4 @@
-import { printResolvedTarget, resolveCommandTarget } from "../target.js";
+import { printResolvedTarget, resolveCommandTarget, targetErrorExitCode } from "../target.js";
 import { formatBytes, instanceContext, stateNotAppliedError, pendingError, writeSnapshot } from "../state.js";
 
 interface SnapshotOptions { force?: boolean; instance?: string }
@@ -25,6 +25,6 @@ export async function snapshot(targetRef: string | undefined, name: string, opti
     console.log(`  Plant with:   grove plant ${target.projectName} --from ${meta.name}`);
   } catch (error) {
     console.error(`Error: ${(error as Error).message}`);
-    process.exitCode = 1;
+    process.exitCode = targetErrorExitCode(error);
   }
 }

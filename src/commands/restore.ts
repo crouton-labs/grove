@@ -13,7 +13,7 @@ import {
   applyRef,
 } from "../state.js";
 import type { GrovePendingOperation } from "../types.js";
-import type { GroveTarget } from "../target.js";
+import { TargetUsageError, targetErrorExitCode, type GroveTarget } from "../target.js";
 
 interface RestoreOptions extends TargetingOptions {
   force?: boolean;
@@ -27,7 +27,7 @@ export async function restore(
 ): Promise<void> {
   try {
     const selecting = options.selector !== undefined || options.all === true;
-    if (options.instance && refOrUndefined !== undefined) throw new Error("name the target once; use either [target] or --instance <target>");
+    if (options.instance && refOrUndefined !== undefined) throw new TargetUsageError("name the target once; use either [target] or --instance <target>");
     const stateRef = options.instance
       ? targetOrProject
       : selecting && refOrUndefined === undefined ? targetOrProject : refOrUndefined;
@@ -39,7 +39,7 @@ export async function restore(
       : (announceSelectionTarget(selection.targets[0], selection.source), await restoreTarget(selection.targets[0], stateRef, options));
   } catch (error) {
     console.error(`Error: ${(error as Error).message}`);
-    process.exitCode = 1;
+    process.exitCode = targetErrorExitCode(error);
   }
 }
 
