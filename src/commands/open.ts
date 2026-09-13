@@ -4,7 +4,7 @@ import { tmuxSessionName } from "../tmux.js";
 export function open(targetRef: string | undefined, options: { json?: boolean }): void {
   try {
     const target = resolveTarget({ at: targetRef, cwd: process.cwd() });
-    if (!target) throw new Error(`current directory is outside a registered project root: ${process.cwd()}`);
+    if (!target) throw new TargetNotFoundError(`current directory is outside a registered project root: ${process.cwd()}`);
     assertTargetUsable(target);
     if (options.json) {
       console.log(JSON.stringify({
