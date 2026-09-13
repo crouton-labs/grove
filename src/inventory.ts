@@ -85,7 +85,7 @@ export async function gatherInventory(projectName?: string): Promise<GroveInvent
       .map((instance) => ({ project, projectName: name, root: path.resolve(instance.path), instance }));
     const [source_target, ...instanceTargets] = await Promise.all([
       gatherTarget(sourceTarget, sourceConfig, lifecycle, sourceConfigHash),
-      ...instances.map((target) => gatherTarget(target, undefined, lifecycle, sourceConfigHash)),
+      ...instances.map((target) => gatherTarget(target, sourceConfig, lifecycle, sourceConfigHash)),
     ]);
     return {
       name,
