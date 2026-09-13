@@ -36,10 +36,14 @@ export interface GroveInstance {
    * instance exists without its data state; a successful restore clears it.
    */
   needsState?: string;
+  /** The state reference most recently applied to this instance. */
+  stateRef?: string;
   /** Present while an operation has reserved this instance's slot. */
   pending?: "planting" | "uprooting" | "applying" | "restoring" | "releasing" | "rolling-out" | "rolling-back";
   /** Identifies the specific plant attempt that owns a pending reservation. */
   reservationId?: string;
+  /** External configured-repository worktrees recorded before an uproot reservation. */
+  uprootWorktrees?: string[];
   /** Identifies the process and restore request that own an apply or restore reservation. */
   pendingOperation?: GrovePendingOperation;
   spec: GroveInstanceSpec;

@@ -46,6 +46,7 @@ export async function release(targetRef: string, options: ReleaseOptions): Promi
       pendingOperation: { pending: reservation.pending, id: reservation.id },
       complete: (instance) => {
         instance.spec.labels = { "grove.pool": "ready" };
+        instance.stateRef = "baseline";
       },
     });
     console.log(`Released: ${targetName(reservation.target)}`);

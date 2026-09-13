@@ -46,6 +46,8 @@ interface PlantOptions {
   from?: string;
   ignoreFingerprint?: boolean;
   label?: string[];
+  /** Internal callers can delay the automation summary until post-plant verification. */
+  quiet?: boolean;
 }
 
 export async function plant(
@@ -234,6 +236,7 @@ export async function plant(
       pending: "planting",
       reservationId,
       spec: { codeFrom, from: options.from ?? BASELINE_REF, labels },
+      stateRef: options.from ?? BASELINE_REF,
       history: [],
     };
     if (pendingRef) instance.needsState = pendingRef;
@@ -404,8 +407,11 @@ export async function plant(
     applied,
   };
 
-  console.log("");
-  console.log(`Planted: ${project}/${name}`);
-  console.log("");
-  printGroveOutput(summary);
+  if (!options.quiet) {
+    console.log("");
+    console.log(`Planted: ${project}/${name}`);
+    console.log("");
+    printGroveOutput(summary);
+  }
+  return summary;
 }

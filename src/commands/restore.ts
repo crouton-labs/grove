@@ -115,6 +115,7 @@ export async function restoreTarget(
     delete currentInstance.pending;
     delete currentInstance.pendingOperation;
     delete currentInstance.needsState;
+    currentInstance.stateRef = stateRef;
     if (reserved.sourceInstanceName !== undefined && reserved.sourceInstanceName !== currentInstance.name) {
       const sourceInstance = current.project.instances.find((candidate) => candidate.name === reserved.sourceInstanceName);
       if (!sourceInstance) throw new Error(`${current.projectName}/${reserved.sourceInstanceName} is no longer registered`);

@@ -12,6 +12,7 @@ import { apply } from "./commands/apply.js";
 import { rollout } from "./commands/rollout.js";
 import { rollback } from "./commands/rollback.js";
 import { uproot } from "./commands/uproot.js";
+import { finish } from "./commands/finish.js";
 import { list } from "./commands/list.js";
 import { adopt } from "./commands/adopt.js";
 import { doctor } from "./commands/doctor.js";
@@ -134,7 +135,7 @@ program
   .option("--ignore-fingerprint", "Restore even when the captured schema differs")
   .option("--label <key=value>", "Instance label; repeatable (key: [a-z0-9._-]+)", collectString, [])
   .addHelpText("after", `\n${CODE_GRAMMAR}\n\n${REF_GRAMMAR}\n\n${SLOT_CAP_GRAMMAR}\n`)
-  .action(plant);
+  .action(async (project: string, name: string | undefined, options) => { await plant(project, name, options); });
 
 program
   .command("pool <project>")
@@ -208,8 +209,20 @@ program
   .option("-l, --selector <key=value[,key=value]>", "Select instances whose labels all match")
   .option("--all", "Select every planted instance")
   .option("--force", "Skip confirmation prompt; required with -l or --all")
+  .option("--owner <value>", "Require this exact owner label before removal")
   .addHelpText("after", `\n${TARGETING_HELP}\n\nUproot with -l or --all requires --force. The configured teardown script alone receives GROVE_SIBLINGS_JSON: the slot-sorted JSON inventory remaining after this instance is gone, including the source at slot 0. No other dispatched command receives it.\n`)
   .action(uproot);
+
+program
+  .command("finish [target]")
+  .description("Remove one landed instance")
+  .option("--instance <target>", "Target one instance instead of using [target]")
+  .option("--owner <value>", "Require this exact owner label before removal")
+  .option("--json", "Print the finish result as JSON")
+  .option("-l, --selector <key=value>", "Unsupported: finish accepts one target only")
+  .option("--all", "Unsupported: finish accepts one target only")
+  .addHelpText("after", "\nFinish verifies every configured repository, registered worktree, and stash is landed before it stops services and removes the instance. To deliberately discard work, use grove uproot <target> --force.\n")
+  .action(finish);
 
 program
   .command("list [project]")

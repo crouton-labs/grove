@@ -1,9 +1,11 @@
 import fs from "fs";
-import { execSync } from "child_process";
+import path from "path";
+import { execFileSync, execSync } from "child_process";
 import { saveRegistry, withRegistryLock } from "../registry.js";
 import { confirm } from "../prompt.js";
 import { computePorts, checkPort } from "../ports.js";
-import { loadRepoConfig, resolveProjectPath } from "../config.js";
+import { isWithinRoot, loadRepoConfig, resolveProjectPath } from "../config.js";
+import { configuredRepositories } from "../revisions.js";
 import { stopInstanceServices } from "../process.js";
 import { regenerateAliases } from "../aliases.js";
 import { groveContextEnv, type GroveSibling } from "../context.js";
@@ -13,6 +15,16 @@ import type { GroveTarget } from "../target.js";
 
 interface UprootOptions extends TargetingOptions {
   force?: boolean;
+  owner?: string;
+}
+
+export class OwnerChangedError extends Error {}
+
+interface UprootTargetOptions {
+  force?: boolean;
+  owner?: string;
+  externalWorktrees?: string[];
+  quiet?: boolean;
 }
 
 export async function uproot(targetOrProject: string | undefined, options: UprootOptions): Promise<void> {
@@ -30,7 +42,7 @@ export async function uproot(targetOrProject: string | undefined, options: Uproo
   }
 }
 
-export async function uprootTarget(target: GroveTarget, options: Pick<UprootOptions, "force">): Promise<number> {
+export async function uprootTarget(target: GroveTarget, options: UprootTargetOptions): Promise<number> {
   if (!target.instance) {
     throw new Error(`${target.projectName} is the project source; grove uproot needs a planted instance`);
   }
@@ -40,10 +52,13 @@ export async function uprootTarget(target: GroveTarget, options: Pick<UprootOpti
   }
   const instanceName = instance.name;
   const exists = fs.existsSync(instance.path);
+  const log = options.quiet ? (() => {}) : console.log;
+  const error = options.quiet ? (() => {}) : console.error;
+  const externalWorktrees = options.externalWorktrees ?? instance.uprootWorktrees ?? recordedExternalWorktrees(target);
 
-  console.log(`Uprooting ${project}/${instanceName}`);
-  console.log(`  Path: ${instance.path}${exists ? "" : " (already gone)"}`);
-  console.log(`  Slot: ${instance.slot}`);
+  log(`Uprooting ${project}/${instanceName}`);
+  log(`  Path: ${instance.path}${exists ? "" : " (already gone)"}`);
+  log(`  Slot: ${instance.slot}`);
 
   const ports = computePorts(proj.ports, instance.slot);
   let teardownPath: string | null = null;
@@ -60,10 +75,10 @@ export async function uprootTarget(target: GroveTarget, options: Pick<UprootOpti
   }
 
   if (Object.keys(ports).length) {
-    console.log("  Ports:");
+    log("  Ports:");
     for (const [svc, port] of Object.entries(ports)) {
       const up = await checkPort(port);
-      console.log(`    ${svc}: ${port} ${up ? "\x1b[32m●\x1b[0m" : "\x1b[90m○\x1b[0m"}`);
+      log(`    ${svc}: ${port} ${up ? "\x1b[32m●\x1b[0m" : "\x1b[90m○\x1b[0m"}`);
     }
   }
 
@@ -93,7 +108,11 @@ export async function uprootTarget(target: GroveTarget, options: Pick<UprootOpti
     if (currentInstance.pending === "applying" || currentInstance.pending === "restoring" || currentInstance.pending === "releasing" || currentInstance.pending === "rolling-out" || currentInstance.pending === "rolling-back") {
       throw new Error(pendingError(project, currentInstance));
     }
+    if (options.owner !== undefined && currentInstance.spec.labels.owner !== options.owner) {
+      throw new OwnerChangedError(`${project}/${instanceName} owner changed before removal`);
+    }
     currentInstance.pending = "uprooting";
+    currentInstance.uprootWorktrees = externalWorktrees;
     delete currentInstance.reservationId;
     await saveRegistry(currentRegistry);
     return [
@@ -116,32 +135,35 @@ export async function uprootTarget(target: GroveTarget, options: Pick<UprootOpti
   }
 
   try {
-    console.log("\nStopping services...");
-    const { killed, portsFreed } = await stopInstanceServices(instance.path, ports);
+    log("\nStopping services...");
+    const { killed, portsFreed } = await stopInstanceServices(instance.path, ports, log);
     if (killed > 0) {
-      console.log(`  Killed ${killed} process${killed > 1 ? "es" : ""}.`);
+      log(`  Killed ${killed} process${killed > 1 ? "es" : ""}.`);
     } else {
-      console.log("  No running services found.");
+      log("  No running services found.");
     }
     if (!portsFreed) {
-      console.log("\n\x1b[33m⚠\x1b[0m Some ports could not be freed. Continuing with teardown.");
+      log("\n\x1b[33m⚠\x1b[0m Some ports could not be freed. Continuing with teardown.");
     }
 
     if (teardownPath && teardownScript && contextEnv) {
-      console.log(`\nRunning teardown script: ${teardownScript}`);
+      log(`\nRunning teardown script: ${teardownScript}`);
       try {
         execSync(`bash "${teardownPath}"`, {
-          stdio: "inherit",
+          stdio: options.quiet ? "ignore" : "inherit",
           cwd: instance.path,
           env: contextEnv,
         });
       } catch {
-        console.error("  Warning: teardown script failed.");
+        error("  Warning: teardown script failed.");
       }
     }
 
+    for (const worktreePath of externalWorktrees) {
+      if (fs.existsSync(worktreePath)) fs.rmSync(worktreePath, { recursive: true, force: true });
+    }
     if (exists) {
-      console.log(`\nRemoving ${instance.path}...`);
+      log(`\nRemoving ${instance.path}...`);
       fs.rmSync(instance.path, { recursive: true, force: true });
     }
 
@@ -164,6 +186,29 @@ export async function uprootTarget(target: GroveTarget, options: Pick<UprootOpti
     throw new Error((error as Error).message);
   }
 
-  console.log(`\nUprooted ${project}/${instanceName}.`);
+  log(`\nUprooted ${project}/${instanceName}.`);
   return 0;
+}
+
+/** Git itself reports the only worktrees Grove is allowed to remove. */
+function recordedExternalWorktrees(target: GroveTarget): string[] {
+  if (!target.instance || !fs.existsSync(target.instance.path)) return [];
+  const config = loadRepoConfig(target.project.source, target.project.configFile);
+  if (!config?.repos || Object.keys(config.repos).length === 0) return [];
+  const repositories = configuredRepositories(target.instance.path, config, "uproot");
+  const paths = new Set<string>();
+  for (const repository of repositories) {
+    let output: string;
+    try {
+      output = execFileSync("git", ["worktree", "list", "--porcelain"], { cwd: repository.path, encoding: "utf-8" });
+    } catch (failure) {
+      throw new Error(`cannot uproot ${repository.name}: ${(failure as Error).message}`);
+    }
+    for (const line of output.split("\n")) {
+      if (!line.startsWith("worktree ")) continue;
+      const worktreePath = path.resolve(line.slice("worktree ".length));
+      if (!isWithinRoot(path.resolve(target.instance.path), worktreePath)) paths.add(worktreePath);
+    }
+  }
+  return [...paths];
 }

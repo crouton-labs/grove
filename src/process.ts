@@ -103,6 +103,7 @@ export async function killPids(pids: number[]): Promise<number> {
 export async function stopInstanceServices(
   instancePath: string,
   ports: Record<string, number>,
+  output: (message: string) => void = console.log,
 ): Promise<{ killed: number; portsFreed: boolean }> {
   let totalKilled = 0;
 
@@ -111,7 +112,7 @@ export async function stopInstanceServices(
   for (const [svc, port] of portEntries) {
     const pids = findPidsOnPort(port);
     if (pids.length) {
-      console.log(`  Killing ${svc} on :${port} (${pids.length} pid${pids.length > 1 ? "s" : ""})...`);
+      output(`  Killing ${svc} on :${port} (${pids.length} pid${pids.length > 1 ? "s" : ""})...`);
       totalKilled += await killPids(pids);
     }
   }
@@ -119,7 +120,7 @@ export async function stopInstanceServices(
   // Phase 2: Kill any remaining processes by path
   const pathPids = findPidsByPath(instancePath);
   if (pathPids.length) {
-    console.log(`  Killing ${pathPids.length} remaining process${pathPids.length > 1 ? "es" : ""} in ${instancePath}...`);
+    output(`  Killing ${pathPids.length} remaining process${pathPids.length > 1 ? "es" : ""} in ${instancePath}...`);
     totalKilled += await killPids(pathPids);
   }
 
@@ -129,7 +130,7 @@ export async function stopInstanceServices(
     const stillUp = await checkPort(port);
     if (stillUp) {
       const remainingPids = findPidsOnPort(port);
-      console.log(
+      output(
         `  \x1b[31m✗\x1b[0m Port ${port} (${svc}) still in use${remainingPids.length ? ` by PID ${remainingPids.join(", ")}` : ""}`,
       );
       allFree = false;
@@ -139,7 +140,7 @@ export async function stopInstanceServices(
   // Phase 4: Final check — any path-matched processes still alive?
   const survivors = findPidsByPath(instancePath);
   if (survivors.length) {
-    console.log(`  \x1b[33m⚠\x1b[0m ${survivors.length} process${survivors.length > 1 ? "es" : ""} still running (force killing)...`);
+    output(`  \x1b[33m⚠\x1b[0m ${survivors.length} process${survivors.length > 1 ? "es" : ""} still running (force killing)...`);
     for (const pid of survivors) {
       forceKillPid(pid);
     }
@@ -148,7 +149,7 @@ export async function stopInstanceServices(
 
     const finalSurvivors = findPidsByPath(instancePath);
     if (finalSurvivors.length) {
-      console.log(`  \x1b[31m✗\x1b[0m ${finalSurvivors.length} unkillable process${finalSurvivors.length > 1 ? "es" : ""} remain: ${finalSurvivors.join(", ")}`);
+      output(`  \x1b[31m✗\x1b[0m ${finalSurvivors.length} unkillable process${finalSurvivors.length > 1 ? "es" : ""} remain: ${finalSurvivors.join(", ")}`);
       allFree = false;
     }
   }
