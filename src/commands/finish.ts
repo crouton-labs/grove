@@ -184,7 +184,9 @@ export async function checkLanded(target: GroveTarget, options: { fetch?: boolea
     const worktrees = await listWorktrees(repository);
     for (const worktree of worktrees) {
       if (!isWithinRoot(path.resolve(instance.path), path.resolve(worktree.path))) externalWorktrees.push(worktree.path);
-      if (!fs.existsSync(worktree.path)) continue;
+      // A prunable entry has lost its gitdir link — macOS clears old files out of /tmp but leaves the
+      // directory — so it is not a checkout: git status there fails, and nothing in it can hold work.
+      if (worktree.prunable || !fs.existsSync(worktree.path)) continue;
       if (fetched.kind === "ok" && worktree.detached) {
         const unlanded = await cherry(repository, `origin/${repository.branch}`, "HEAD", worktree.path);
         if (unlanded.length) report.branches.push({ name: `HEAD (${worktree.path})`, unlanded });
@@ -214,7 +216,7 @@ async function cherry(repository: ConfiguredRepository, upstream: string, ref: s
   }));
 }
 
-interface WorktreeEntry { path: string; detached: boolean }
+interface WorktreeEntry { path: string; detached: boolean; prunable: boolean }
 
 async function listWorktrees(repository: ConfiguredRepository): Promise<WorktreeEntry[]> {
   const output = await git(repository.path, ["worktree", "list", "--porcelain"], repository.name, "finish");
@@ -223,9 +225,11 @@ async function listWorktrees(repository: ConfiguredRepository): Promise<Worktree
   for (const line of output.split("\n")) {
     if (line.startsWith("worktree ")) {
       if (current) entries.push(current);
-      current = { path: line.slice("worktree ".length), detached: false };
+      current = { path: line.slice("worktree ".length), detached: false, prunable: false };
     } else if (line === "detached" && current) {
       current.detached = true;
+    } else if (line.startsWith("prunable") && current) {
+      current.prunable = true;
     }
   }
   if (current) entries.push(current);
