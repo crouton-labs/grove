@@ -1,5 +1,5 @@
 import { GROVE_CONFIG_FILE, loadRepoConfig } from "../config.js";
-import { assertConfiguredRepositoriesClean, configuredRepositories, discardConfiguredRepositoryChanges, fastForwardConfiguredRepositories } from "../revisions.js";
+import { assertConfiguredRepositoriesClean, assertConfiguredRepositoriesReleaseSafe, configuredRepositories, discardConfiguredRepositoryChanges, fastForwardConfiguredRepositories, removeReleaseSideBranchesAndWorktrees } from "../revisions.js";
 import { hasStateCommand, instanceContext, resetState } from "../state.js";
 import { printResolvedTarget, resolveCommandTarget, targetErrorExitCode, targetName, type GroveTarget } from "../target.js";
 import { applyTarget } from "./apply.js";
@@ -16,13 +16,20 @@ export async function release(targetRef: string | undefined, options: ReleaseOpt
     printResolvedTarget(resolved);
     if (!hasStateCommand(target.project, instanceContext(target.project, target.projectName, target.instance.name))) throw new Error(`cannot release ${targetName(target)}: no usable stateCommand is configured`);
     const preflight = sourceRepositories(target);
-    if (!options.force) assertConfiguredRepositoriesClean(preflight.repositories, "release", true);
+    if (!options.force) {
+      assertConfiguredRepositoriesClean(preflight.repositories, "release", true);
+      assertConfiguredRepositoriesReleaseSafe(preflight.repositories);
+    }
     const reservation = await reserveRevisionOperation(target, "releasing");
     const { repositories } = sourceRepositories(reservation.target);
     if (options.force) discardConfiguredRepositoryChanges(repositories, "release");
-    else assertConfiguredRepositoriesClean(repositories, "release", true);
+    else {
+      assertConfiguredRepositoriesClean(repositories, "release", true);
+      assertConfiguredRepositoriesReleaseSafe(repositories);
+    }
     console.log(`Releasing ${targetName(reservation.target)} (slot ${reservation.target.instance!.slot})`);
     fastForwardConfiguredRepositories(repositories, "release");
+    removeReleaseSideBranchesAndWorktrees(repositories, Boolean(options.force));
     console.log("  Resetting state...");
     resetState(reservation.target.project, instanceContext(reservation.target.project, reservation.target.projectName, reservation.target.instance!.name));
     await applyTarget(reservation.target, {

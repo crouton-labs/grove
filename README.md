@@ -114,7 +114,7 @@ For `restore`, use `grove restore <target> <ref>` for one target and `grove rest
 
 `grove claim <project> [--label key=value...]` atomically takes the lowest-slot ready instance, removes `grove.pool=ready`, and adds the supplied labels. It prints the same `--- grove-output ---` JSON block as `grove plant`. When no ready instance exists, grow the pool with `grove pool <project> --size N`.
 
-`grove release <project/instance> [--force]` returns a claimed instance to the pool. It refuses tracked or untracked changes in every configured repository. `--force` runs `git reset --hard` and `git clean -fd` in every configured repository, then Grove fast-forwards configured branches, resets the data state, applies the project configuration, drops all labels, and sets `grove.pool=ready`. An interruption before the final save leaves the `releasing` reservation and the instance's existing labels in place; re-run `grove release <target>` to finish it. If it reports repository changes, run `grove release <target> --force`.
+`grove release <project/instance> [--force]` returns a claimed instance to the pool. It refuses tracked or untracked changes in every configured repository, side branches with commits on no remote, changed extra worktrees, and checkouts detached on commits no remote holds. Grove fast-forwards configured branches, removes every extra worktree, deletes every local branch except each configured branch, resets the data state, applies the project configuration, drops all labels, and sets `grove.pool=ready`. `--force` runs `git reset --hard` and `git clean -fd` in every configured repository and allows release to discard the otherwise refused side branches and worktrees. An interruption before the final save leaves the `releasing` reservation and the instance's existing labels in place; re-run `grove release <target>` to finish it.
 
 ## Rollout and rollback
 
@@ -191,7 +191,7 @@ The detail pane adds the selected instance's `intent` — its requested code mod
 | `u` | uproot the selected instance, after a `y/n` confirmation |
 | `s` `S` `r` `t` | the project's `start`, `stop`, `reset`, and `status` lifecycle verbs; `r` confirms first |
 | `a` `A` | `grove apply` the selected instance, and `apply --force` over tracked changes; both confirm |
-| `e` `E` | `grove release` the selected instance into the pool, and `release --force` discarding repository changes; both confirm |
+| `e` `E` | `grove release` the selected instance into the pool, deleting side branches and extra worktrees, and `release --force` also discarding repository changes; both confirm |
 | `b` | `grove rollback` the selected instance one revision, after a confirmation; dimmed under two recorded revisions |
 | `l` `L` | add labels, or remove them by key — each opens a one-line prompt; `Enter` runs, `Esc` cancels |
 | `c` | `grove claim` the project's lowest-slot ready instance |

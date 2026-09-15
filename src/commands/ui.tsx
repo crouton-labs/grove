@@ -692,7 +692,7 @@ function App({ projectName }: { projectName: string }) {
       return runGrove(
         force ? `release ${ref} --force` : `release ${ref}`,
         force ? ["release", ref, "--force"] : ["release", ref],
-        `Release ${ref} into the pool? Its data state resets${force ? ", its repository changes are discarded" : ""}, and its labels become grove.pool=ready. (y/n)`,
+        `Release ${ref} into the pool? Its data state resets, its side branches and extra worktrees are deleted${force ? ", and its repository changes are discarded" : ""}, and its labels become grove.pool=ready. (y/n)`,
       );
     }
     if (input === "b") {
