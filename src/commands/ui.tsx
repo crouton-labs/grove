@@ -245,8 +245,7 @@ function workCell(state: WorkState | undefined): Cell {
 /**
  * What `grove finish` would find, with fetching disabled: the same landed check,
  * so the column and the verb can only disagree about how current the remote refs
- * are. Its git calls are synchronous, so the caller runs one instance at a time
- * and lets the frame paint in between rather than gathering the whole fleet at once.
+ * are.
  */
 async function computeWork(projectName: string, instance: InventoryTarget): Promise<WorkState> {
   try {
@@ -422,22 +421,19 @@ function App({ projectName }: { projectName: string }) {
     }
   }, [project?.source, project?.configFile]);
 
-  // WORK is the landed check with fetching disabled, one instance at a time so a fleet of them
-  // cannot hold the frame: each row shows its previous answer, or …, until its own check returns.
-  // A pending or missing instance is skipped — its row shows the pending or zombie line instead.
+  // WORK is the landed check with fetching disabled, every instance at once: each row shows its
+  // previous answer, or …, until its own check returns. A pending or missing instance is skipped —
+  // its row shows the pending or zombie line instead.
   useEffect(() => {
     if (!project) return;
     const instances = project.instances.filter((instance) => instance.exists && !instance.pending);
     let cancelled = false;
     setWork((current) => Object.fromEntries(instances.map((instance) => [workKey(instance), current[workKey(instance)] ?? { kind: "pending" }])));
-    void (async () => {
-      for (const instance of instances) {
-        const state = await computeWork(projectName, instance);
-        if (cancelled) return;
-        setWork((current) => ({ ...current, [workKey(instance)]: state }));
-        await new Promise((resolve) => setTimeout(resolve, 0));
-      }
-    })();
+    for (const instance of instances) {
+      void computeWork(projectName, instance).then((state) => {
+        if (!cancelled) setWork((current) => ({ ...current, [workKey(instance)]: state }));
+      });
+    }
     return () => { cancelled = true; };
   }, [project, projectName]);
 

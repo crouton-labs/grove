@@ -1,4 +1,4 @@
-import { execFileSync, spawn } from "child_process";
+import { execFile, spawn } from "child_process";
 import fs from "fs";
 import path from "path";
 import { GROVE_CONFIG_FILE, isWithinRoot, loadRepoConfig } from "../config.js";
@@ -131,12 +131,12 @@ export async function verifyClaimFreshness(target: GroveTarget): Promise<string[
       reasons.push(`${repository.name}: ${fetched.detail}`);
       continue;
     }
-    const branch = git(repository.path, ["branch", "--show-current"], repository.name, "claim");
-    const head = git(repository.path, ["rev-parse", "HEAD"], repository.name, "claim");
-    const origin = git(repository.path, ["rev-parse", `origin/${repository.branch}`], repository.name, "claim");
+    const branch = await git(repository.path, ["branch", "--show-current"], repository.name, "claim");
+    const head = await git(repository.path, ["rev-parse", "HEAD"], repository.name, "claim");
+    const origin = await git(repository.path, ["rev-parse", `origin/${repository.branch}`], repository.name, "claim");
     if (branch !== repository.branch) reasons.push(`${repository.name}: checked out ${branch || "detached HEAD"}, not ${repository.branch}`);
     if (head !== origin) reasons.push(`${repository.name}: HEAD ${head.slice(0, 12)} is not origin/${repository.branch} ${origin.slice(0, 12)}`);
-    const dirty = git(repository.path, ["--no-optional-locks", "status", "--porcelain", "--untracked-files=all", "--ignore-submodules=none"], repository.name, "claim");
+    const dirty = await git(repository.path, ["--no-optional-locks", "status", "--porcelain", "--untracked-files=all", "--ignore-submodules=none"], repository.name, "claim");
     if (dirty) reasons.push(`${repository.name}: working tree has ${dirty.split("\n").filter(Boolean).length} changed file(s)`);
   }
   return reasons;
@@ -172,28 +172,28 @@ export async function checkLanded(target: GroveTarget, options: { fetch?: boolea
     if (fetched.kind !== "ok") {
       unverifiable = true;
     } else {
-      report.originSha = git(repository.path, ["rev-parse", `origin/${repository.branch}`], repository.name, "finish");
-      const branchNames = git(repository.path, ["for-each-ref", "--format=%(refname:short)", "refs/heads"], repository.name, "finish")
+      report.originSha = await git(repository.path, ["rev-parse", `origin/${repository.branch}`], repository.name, "finish");
+      const branchNames = (await git(repository.path, ["for-each-ref", "--format=%(refname:short)", "refs/heads"], repository.name, "finish"))
         .split("\n").filter(Boolean);
       for (const branch of branchNames) {
-        const unlanded = cherry(repository, `origin/${repository.branch}`, branch);
+        const unlanded = await cherry(repository, `origin/${repository.branch}`, branch);
         if (unlanded.length) report.branches.push({ name: branch, unlanded });
       }
     }
 
-    const worktrees = listWorktrees(repository);
+    const worktrees = await listWorktrees(repository);
     for (const worktree of worktrees) {
       if (!isWithinRoot(path.resolve(instance.path), path.resolve(worktree.path))) externalWorktrees.push(worktree.path);
       if (!fs.existsSync(worktree.path)) continue;
       if (fetched.kind === "ok" && worktree.detached) {
-        const unlanded = cherry(repository, `origin/${repository.branch}`, "HEAD", worktree.path);
+        const unlanded = await cherry(repository, `origin/${repository.branch}`, "HEAD", worktree.path);
         if (unlanded.length) report.branches.push({ name: `HEAD (${worktree.path})`, unlanded });
       }
-      const dirty = git(worktree.path, ["--no-optional-locks", "status", "--porcelain", "--untracked-files=all", "--ignore-submodules=none"], repository.name, "finish");
+      const dirty = await git(worktree.path, ["--no-optional-locks", "status", "--porcelain", "--untracked-files=all", "--ignore-submodules=none"], repository.name, "finish");
       const dirtyFiles = dirty ? dirty.split("\n").filter(Boolean).length : 0;
       if (dirtyFiles) report.worktrees.push({ path: worktree.path, dirtyFiles });
     }
-    report.stash = git(repository.path, ["stash", "list"], repository.name, "finish").split("\n").filter(Boolean).length;
+    report.stash = (await git(repository.path, ["stash", "list"], repository.name, "finish")).split("\n").filter(Boolean).length;
   }
 
   const hasUnlanded = repos.some((report) => report.branches.some((branch) => branch.unlanded.length) || report.worktrees.some((worktree) => worktree.dirtyFiles) || report.stash > 0);
@@ -206,18 +206,18 @@ export async function checkLanded(target: GroveTarget, options: { fetch?: boolea
   return { result, externalWorktrees: [...new Set(externalWorktrees)] };
 }
 
-function cherry(repository: ConfiguredRepository, upstream: string, ref: string, cwd = repository.path): Array<{ sha: string; subject: string }> {
-  const lines = git(cwd, ["cherry", upstream, ref], repository.name, "finish").split("\n").filter((line) => line.startsWith("+ "));
-  return lines.map((line) => {
+async function cherry(repository: ConfiguredRepository, upstream: string, ref: string, cwd = repository.path): Promise<Array<{ sha: string; subject: string }>> {
+  const lines = (await git(cwd, ["cherry", upstream, ref], repository.name, "finish")).split("\n").filter((line) => line.startsWith("+ "));
+  return Promise.all(lines.map(async (line) => {
     const sha = line.slice(2);
-    return { sha: sha.slice(0, 12), subject: git(cwd, ["log", "-1", "--format=%s", sha], repository.name, "finish") };
-  });
+    return { sha: sha.slice(0, 12), subject: await git(cwd, ["log", "-1", "--format=%s", sha], repository.name, "finish") };
+  }));
 }
 
 interface WorktreeEntry { path: string; detached: boolean }
 
-function listWorktrees(repository: ConfiguredRepository): WorktreeEntry[] {
-  const output = git(repository.path, ["worktree", "list", "--porcelain"], repository.name, "finish");
+async function listWorktrees(repository: ConfiguredRepository): Promise<WorktreeEntry[]> {
+  const output = await git(repository.path, ["worktree", "list", "--porcelain"], repository.name, "finish");
   const entries: WorktreeEntry[] = [];
   let current: WorktreeEntry | undefined;
   for (const line of output.split("\n")) {
@@ -236,13 +236,13 @@ type FetchResult = { kind: "ok" } | { kind: "unverifiable"; detail: string };
 
 async function fetchOriginBranch(repository: ConfiguredRepository, withFetch = true): Promise<FetchResult> {
   try {
-    git(repository.path, ["remote", "get-url", "origin"], repository.name, "finish");
+    await git(repository.path, ["remote", "get-url", "origin"], repository.name, "finish");
   } catch {
     return { kind: "unverifiable", detail: "has no origin remote" };
   }
   if (!withFetch) {
     try {
-      git(repository.path, ["rev-parse", "--verify", `origin/${repository.branch}`], repository.name, "finish");
+      await git(repository.path, ["rev-parse", "--verify", `origin/${repository.branch}`], repository.name, "finish");
     } catch {
       return { kind: "unverifiable", detail: `no local ref for origin/${repository.branch}` };
     }
@@ -257,7 +257,7 @@ async function fetchOriginBranch(repository: ConfiguredRepository, withFetch = t
     throw new Error(`cannot finish ${repository.name}: git fetch origin ${repository.branch} exited with status ${result.status}: ${result.stderr || "no diagnostic"}`);
   }
   try {
-    git(repository.path, ["rev-parse", "--verify", `origin/${repository.branch}`], repository.name, "finish");
+    await git(repository.path, ["rev-parse", "--verify", `origin/${repository.branch}`], repository.name, "finish");
   } catch {
     return { kind: "unverifiable", detail: `origin lacks configured branch ${repository.branch}` };
   }
@@ -279,13 +279,18 @@ function runFetch(cwd: string, branch: string): Promise<{ kind: "timeout" } | { 
   });
 }
 
-function git(cwd: string, args: string[], name: string, operation: string): string {
-  try {
-    return execFileSync("git", args, { cwd, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] }).trim();
-  } catch (error) {
-    const failure = error as NodeJS.ErrnoException & { stderr?: Buffer | string };
-    throw new Error(`cannot ${operation} ${name}: ${failure.stderr?.toString().trim() || failure.message}`);
-  }
+/**
+ * Asynchronous so a caller that runs the landed check for a whole fleet — the UI's WORK column —
+ * keeps its event loop free: a synchronous git call here held every keypress for as long as the
+ * check took, up to seconds per instance.
+ */
+function git(cwd: string, args: string[], name: string, operation: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    execFile("git", args, { cwd, encoding: "utf-8" }, (error, stdout, stderr) => {
+      if (error) reject(new Error(`cannot ${operation} ${name}: ${stderr.trim() || error.message}`));
+      else resolve(stdout.trim());
+    });
+  });
 }
 
 function printRefusal(result: FinishResult): void {
