@@ -333,7 +333,7 @@ export async function plant(
 
   // --- Config-driven setup ---
   try {
-    applyExistingCheckoutSetup(
+    await applyExistingCheckoutSetup(
       proj.source,
       targetPath,
       repoConfig,

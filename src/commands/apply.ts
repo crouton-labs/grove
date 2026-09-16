@@ -87,7 +87,7 @@ export async function applyTarget(target: GroveTarget, options: ApplyTargetOptio
   });
 
   console.log(`Applying ${reserved.current.projectName}/${reserved.targetInstance.name} (slot ${reserved.targetInstance.slot})`);
-  applyExistingCheckoutSetup(
+  await applyExistingCheckoutSetup(
     reserved.current.project.source,
     reserved.current.root,
     reserved.sourceConfig,

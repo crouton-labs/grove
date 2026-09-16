@@ -1,6 +1,6 @@
 import path from "path";
 import fs from "fs";
-import { execFileSync, execSync } from "child_process";
+import { execFileSync, execSync, spawn } from "child_process";
 import { PortDef, type GroveApplied } from "./types.js";
 import {
   CopyFromSourceSpec,
@@ -57,9 +57,12 @@ export function matchGlob(filePath: string, pattern: string): boolean {
 }
 
 /**
- * List every file under `dir` as an absolute path. Iterative on purpose: a built
- * instance holds hundreds of thousands of files under node_modules, and a
- * recursive walk that spreads each subtree into its parent overflows the stack.
+ * List every file under `dir` as an absolute path, skipping `node_modules` and `.git`.
+ *
+ * Those two hold the hundreds of thousands of files that made this walk the slowest part of an
+ * apply, and grove rewrites nothing inside either: a dependency's own files are replaced wholesale
+ * by the next install, and git's object store is not text grove edits. Iterative on purpose, so a
+ * deep tree cannot overflow the stack.
  */
 function walkDir(dir: string): string[] {
   const results: string[] = [];
@@ -74,7 +77,7 @@ function walkDir(dir: string): string[] {
     }
     for (const entry of entries) {
       const full = path.join(current, entry.name);
-      if (entry.isDirectory()) pending.push(full);
+      if (entry.isDirectory() && entry.name !== "node_modules" && entry.name !== ".git") pending.push(full);
       else if (entry.isFile()) results.push(full);
     }
   }
@@ -512,8 +515,8 @@ export function patchPorts(
   portDefs: Record<string, PortDef>,
   slot: number,
   configFile = GROVE_CONFIG_FILE,
+  allFiles = walkDir(target),
 ): void {
-  const allFiles = walkDir(target);
   let patchedCount = 0;
 
   for (const absPath of allFiles) {
@@ -560,6 +563,7 @@ export function applySubstitutions(
   slot: number,
   machine: string,
   configFile = GROVE_CONFIG_FILE,
+  allFiles = walkDir(target),
 ): void {
   const compiled = rules.map((rule, index) => ({
     index,
@@ -573,7 +577,7 @@ export function applySubstitutions(
   }));
   const rewrites: Array<{ path: string; relativePath: string; content: string }> = [];
 
-  for (const absPath of walkDir(target)) {
+  for (const absPath of allFiles) {
     // Never rewrite grove's own config — it holds the rules themselves, and a
     // pattern broad enough to match its own `find` string would eat them. The
     // slot's private env file is also outside Grove's rewrite surface.
@@ -620,7 +624,7 @@ export function applySubstitutions(
   console.log(`  Substituted in ${rewrites.length} file(s)`);
 }
 
-export function applyExistingCheckoutSetup(
+export async function applyExistingCheckoutSetup(
   source: string,
   target: string,
   config: GroveRepoConfig | null,
@@ -628,7 +632,7 @@ export function applyExistingCheckoutSetup(
   configFile: string,
   context: GroveExecutionContext,
   settings: GroveSettings,
-): void {
+): Promise<void> {
   if (config?.copyFromSource) {
     console.log("Copying files from source...");
     copyFromSource(source, target, config.copyFromSource, portDefs, context.slot, configFile);
@@ -636,23 +640,25 @@ export function applyExistingCheckoutSetup(
 
   if (config?.secrets) {
     console.log("Materializing secrets...");
-    runSecrets(target, config.secrets, () => groveContextEnv(context, process.env, settings));
+    await runSecrets(target, config.secrets, () => groveContextEnv(context, process.env, settings));
   }
+
+  const setupFiles = config?.patchPortsIn || config?.substituteIn ? walkDir(target) : undefined;
 
   if (config?.patchPortsIn) {
     console.log("Patching port references...");
-    patchPorts(target, config.patchPortsIn, portDefs, context.slot, configFile);
+    patchPorts(target, config.patchPortsIn, portDefs, context.slot, configFile, setupFiles);
   }
 
   if (config?.substituteIn) {
     console.log("Applying per-slot substitutions...");
     const machine = groveContextEnv(context, process.env, settings).GROVE_MACHINE!;
-    applySubstitutions(target, config.substituteIn, context.slot, machine, configFile);
+    applySubstitutions(target, config.substituteIn, context.slot, machine, configFile, setupFiles);
   }
 
   if (config?.install) {
     console.log("Installing dependencies...");
-    runInstalls(target, config.install, () => groveContextEnv(context, process.env, settings));
+    await runInstalls(target, config.install, () => groveContextEnv(context, process.env, settings));
   }
 
   if (hasSetupScript(source, configFile)) {
@@ -677,42 +683,89 @@ interface RunCommandsOptions {
   fatal: boolean;
 }
 
-function runCommands(
+function runCommand(
+  cmd: string,
+  cwd: string,
+  env: NodeJS.ProcessEnv,
+): Promise<{ output: string; succeeded: boolean }> {
+  return new Promise((resolve) => {
+    let output = "";
+    // No stdin: groups run concurrently and their output is held back until the group ends, so a
+    // command that stopped to ask something would be waiting invisibly forever. It gets EOF instead.
+    const child = spawn(cmd, { shell: true, cwd, env, stdio: ["ignore", "pipe", "pipe"] });
+    child.stdout.on("data", (chunk: Buffer) => { output += chunk; });
+    child.stderr.on("data", (chunk: Buffer) => { output += chunk; });
+    child.on("error", () => resolve({ output, succeeded: false }));
+    child.on("close", (code) => resolve({ output, succeeded: code === 0 }));
+  });
+}
+
+async function runCommandGroup(
+  target: string,
+  spec: InstallSpec,
+  opts: RunCommandsOptions,
+  envForCommand: () => NodeJS.ProcessEnv,
+): Promise<Error | undefined> {
+  const dir = path.join(target, spec.dir);
+  let output = "";
+  let failure: Error | undefined;
+
+  console.log(`  Running ${opts.label} in ${spec.dir}...`);
+  for (const cmd of spec.cmds) {
+    const result = await runCommand(cmd, dir, envForCommand());
+    output += result.output;
+    if (!result.succeeded) {
+      if (opts.fatal) {
+        failure = new Error(`${opts.label} command failed in ${spec.dir}: ${cmd}`);
+        break;
+      }
+      console.error(`  Warning: command failed in ${spec.dir}: ${cmd}`);
+    }
+  }
+
+  console.log(`  ${opts.label} output from ${spec.dir}:`);
+  if (output) process.stdout.write(output.endsWith("\n") ? output : `${output}\n`);
+  if (!failure) console.log(`  ${spec.dir} ready`);
+  return failure;
+}
+
+async function runCommands(
   target: string,
   specs: InstallSpec[],
   opts: RunCommandsOptions,
   envForCommand: () => NodeJS.ProcessEnv,
-): void {
+): Promise<void> {
+  const runnable: InstallSpec[] = [];
   for (const spec of specs) {
-    const dir = path.join(target, spec.dir);
-    if (!fs.existsSync(dir)) {
-      // A missing directory is survivable for installs but not for secrets:
-      // silently skipping leaves the instance without env files it needs.
-      if (opts.fatal) {
-        throw new Error(`${opts.label} directory not found in target: ${spec.dir}`);
-      }
-      console.log(`  Skipping ${opts.label} in ${spec.dir} (directory not found)`);
+    if (fs.existsSync(path.join(target, spec.dir))) {
+      runnable.push(spec);
       continue;
     }
-
-    console.log(`  Running ${opts.label} in ${spec.dir}...`);
-    for (const cmd of spec.cmds) {
-      const env = envForCommand();
-      try {
-        execSync(cmd, { stdio: "inherit", cwd: dir, env });
-      } catch {
-        if (opts.fatal) {
-          throw new Error(`${opts.label} command failed in ${spec.dir}: ${cmd}`);
-        }
-        console.error(`  Warning: command failed in ${spec.dir}: ${cmd}`);
-      }
+    // A missing directory is survivable for installs but not for secrets:
+    // silently skipping leaves the instance without env files it needs.
+    if (opts.fatal) {
+      throw new Error(`${opts.label} directory not found in target: ${spec.dir}`);
     }
-    console.log(`  ${spec.dir} ready`);
+    console.log(`  Skipping ${opts.label} in ${spec.dir} (directory not found)`);
   }
+
+  if (opts.fatal) {
+    for (const spec of runnable) {
+      const failure = await runCommandGroup(target, spec, opts, envForCommand);
+      if (failure) throw failure;
+    }
+    return;
+  }
+
+  await Promise.all(runnable.map((spec) => runCommandGroup(target, spec, opts, envForCommand)));
 }
 
-export function runInstalls(target: string, specs: InstallSpec[], envForCommand: () => NodeJS.ProcessEnv): void {
-  runCommands(target, specs, { label: "install", fatal: false }, envForCommand);
+export async function runInstalls(
+  target: string,
+  specs: InstallSpec[],
+  envForCommand: () => NodeJS.ProcessEnv,
+): Promise<void> {
+  await runCommands(target, specs, { label: "install", fatal: false }, envForCommand);
 }
 
 /**
@@ -720,6 +773,10 @@ export function runInstalls(target: string, specs: InstallSpec[], envForCommand:
  * missing secret surfaces later as an unexplained runtime failure rather than
  * as the plant error it actually is.
  */
-export function runSecrets(target: string, specs: InstallSpec[], envForCommand: () => NodeJS.ProcessEnv): void {
-  runCommands(target, specs, { label: "secrets", fatal: true }, envForCommand);
+export async function runSecrets(
+  target: string,
+  specs: InstallSpec[],
+  envForCommand: () => NodeJS.ProcessEnv,
+): Promise<void> {
+  await runCommands(target, specs, { label: "secrets", fatal: true }, envForCommand);
 }
