@@ -1,6 +1,6 @@
 {
   "name": "@crouton-kit/grove",
-  "version": "0.2.36",
+  "version": "0.2.37",
   "description": "Parallel project instance manager for declarative apply, labels, ready pools, rollout, and rollback",
   "type": "module",
   "bin": {
