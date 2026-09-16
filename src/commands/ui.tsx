@@ -9,6 +9,7 @@ import {
   type InventoryProject,
   type InventoryTarget,
 } from "../inventory.js";
+import { cancelJob, followJob, jobElapsed, readJob, runningJobs, startDetachedJob } from "../jobs.js";
 import { captureChild, planLifecycle, runLifecycleCaptured, type LifecycleRun } from "../lifecycle.js";
 import { loadRegistry } from "../registry.js";
 import { SETTINGS_PATH, loadSettings } from "../settings.js";
@@ -48,6 +49,7 @@ export async function ui(projectRef?: string): Promise<void> {
     } finally {
       leaveAltScreen();
     }
+    reportRunningJobs();
   } catch (error) {
     console.error(`Error: ${(error as Error).message}`);
     process.exitCode = 1;
@@ -300,13 +302,31 @@ function formatApplied(target: InventoryTarget): string {
 
 // --- child processes --------------------------------------------------------
 
-/** Run grove's own CLI as a child so its output lands in the log pane. */
-function runGroveCaptured(args: string[], onLine: (line: string) => void): LifecycleRun {
-  const child = spawn(process.execPath, [...process.execArgv, process.argv[1], ...args], {
-    stdio: ["ignore", "pipe", "pipe"],
-    env: { ...process.env, FORCE_COLOR: "0" },
-  });
-  return captureChild(child, onLine);
+/** A started action. `jobId` is set when it is a detached job, which outlives the ui. */
+interface ActionRun extends LifecycleRun {
+  jobId?: string;
+}
+
+/**
+ * Run grove's own CLI as a detached job and follow its log.
+ *
+ * The ui does not own the process: a release takes minutes, and holding the whole screen hostage to
+ * it — which is what running it as a child did — is the thing jobs exist to end. Following a log
+ * file is what lets the pane show the same output while the screen stays usable and quitting leaves
+ * the work running.
+ */
+function startGroveJob(args: string[], onLine: (line: string) => void): ActionRun {
+  const job = startDetachedJob(args, args.join(" "));
+  return { ...followJob(job, onLine), jobId: job.id };
+}
+
+/** After the screen is gone: name the jobs still running, which the ui no longer shows. */
+function reportRunningJobs(): void {
+  const active = runningJobs();
+  if (active.length === 0) return;
+  console.log(`${active.length} background job${active.length === 1 ? "" : "s"} still running:`);
+  for (const job of active) console.log(`  ${job.id}  ${jobElapsed(job)}  grove ${job.label}`);
+  console.log("Watch one with: grove logs <id> -f   ·   stop one with: grove cancel <id>");
 }
 
 // --- components -------------------------------------------------------------
@@ -354,6 +374,8 @@ interface ActionState {
   output: string[] | null;
   startedAt: number;
   exit: number | null;
+  /** The background job behind this action, or null for an in-process child the ui owns. */
+  jobId: string | null;
 }
 
 interface Confirmation {
@@ -386,6 +408,21 @@ function App({ projectName }: { projectName: string }) {
   const interrupt = useRef<(() => void) | null>(null);
 
   const running = action !== null && action.exit === null;
+  /** The running action's job id, when it has one. A job runs outside the ui, so the screen stays usable. */
+  const runningJobId = running && action !== null ? action.jobId : null;
+
+  /**
+   * Leave the action pane. A job is only stopped being watched — it keeps running — so the message
+   * says how to pick it up again; an in-process action is already finished when this is reached.
+   */
+  const clearAction = () => {
+    if (runningJobId) {
+      interrupt.current?.();
+      interrupt.current = null;
+      setMessage(`Job ${runningJobId} is still running — watch it with: grove logs ${runningJobId} -f`);
+    }
+    setAction(null);
+  };
 
   const refresh = useCallback(async () => {
     try {
@@ -402,6 +439,14 @@ function App({ projectName }: { projectName: string }) {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  // A job started before this ui — from a terminal, or by an earlier session — is still grove work
+  // on these targets, so the screen says so instead of leaving it invisible.
+  useEffect(() => {
+    const active = runningJobs();
+    if (active.length === 0) return;
+    setMessage(`${active.length} background job${active.length === 1 ? "" : "s"} running: ${active.map((job) => `${job.id} ${job.label}`).join(" · ")}`);
+  }, []);
 
   useEffect(() => {
     if (!running) return;
@@ -460,10 +505,10 @@ function App({ projectName }: { projectName: string }) {
   const targetRef = target && !row?.isSource ? `${projectName}/${target.name}` : projectName;
 
   const startAction = useCallback(
-    (title: string, command: string, start: (onLine: (line: string) => void) => LifecycleRun, done?: (code: number, output: string[]) => void) => {
+    (title: string, command: string, start: (onLine: (line: string) => void) => ActionRun, done?: (code: number, output: string[]) => void) => {
       setStatusText(null);
       setMessage("");
-      setAction({ title, command, lines: [], output: null, startedAt: Date.now(), exit: null });
+      setAction({ title, command, lines: [], output: null, startedAt: Date.now(), exit: null, jobId: null });
       // Every line is kept here; the pane shows a tail while the action runs and the whole of it,
       // as much as fits, once it exits.
       const captured: string[] = [];
@@ -471,7 +516,7 @@ function App({ projectName }: { projectName: string }) {
         captured.push(line);
         setAction((current) => (current ? { ...current, lines: [...current.lines, line].slice(-LOG_LINES) } : current));
       };
-      let run: LifecycleRun;
+      let run: ActionRun;
       try {
         run = start(onLine);
       } catch (startError) {
@@ -479,6 +524,8 @@ function App({ projectName }: { projectName: string }) {
         setMessage((startError as Error).message);
         return;
       }
+      // The id is known only after the job starts, and the pane is already on screen by then.
+      if (run.jobId) setAction((current) => (current ? { ...current, jobId: run.jobId ?? null } : current));
       interrupt.current = run.interrupt;
       run.exit.then(
         (code) => {
@@ -570,7 +617,7 @@ function App({ projectName }: { projectName: string }) {
    * the elapsed count, and the child's output, and the inventory is re-read when it exits.
    */
   const runGrove = (title: string, args: string[], confirmPrompt?: string) => {
-    const run = () => startAction(title, `grove ${args.join(" ")}`, (onLine) => runGroveCaptured(args, onLine));
+    const run = () => startAction(title, `grove ${args.join(" ")}`, (onLine) => startGroveJob(args, onLine));
     if (confirmPrompt) return setConfirmation({ prompt: confirmPrompt, run });
     run();
   };
@@ -591,6 +638,16 @@ function App({ projectName }: { projectName: string }) {
 
   useInput((input, key) => {
     if (key.ctrl && input === "c") {
+      if (runningJobId) {
+        const job = readJob(runningJobId);
+        if (!job) return setMessage(`job ${runningJobId} has no record on disk — stop it with: grove cancel ${runningJobId}`);
+        try {
+          cancelJob(job);
+        } catch (cancelError) {
+          return setMessage((cancelError as Error).message);
+        }
+        return setMessage(`Cancelling job ${runningJobId} — grove list names the re-run that finishes it.`);
+      }
       if (running) {
         interrupt.current?.();
         setMessage("Interrupted — asked the running command to stop.");
@@ -599,7 +656,8 @@ function App({ projectName }: { projectName: string }) {
       return exit();
     }
     if (help) return setHelp(false);
-    if (running) return setMessage("An action is running. Ctrl-C interrupts it.");
+    // A job runs outside the ui, so only an action the ui owns itself blocks the whole keyboard.
+    if (running && !runningJobId) return setMessage("An action is running. Ctrl-C interrupts it.");
     if (confirmation) {
       const confirmed = input === "y" || input === "Y";
       const pending = confirmation;
@@ -626,6 +684,7 @@ function App({ projectName }: { projectName: string }) {
       if (typed && !key.ctrl && !key.meta) return setPrompt({ ...prompt, value: prompt.value + typed });
       return;
     }
+    if (key.escape && runningJobId) return clearAction();
     if (input === "q" || key.escape) return exit();
     if (input === "?") return setHelp(true);
     // Until the first gather lands there is no table, so nothing below this line has a row to act on.
@@ -633,13 +692,13 @@ function App({ projectName }: { projectName: string }) {
     if (key.upArrow || input === "k") {
       const next = rows[Math.max(0, index - 1)];
       if (next) setSlot(next.slot);
-      setAction(null);
+      clearAction();
       return;
     }
     if (key.downArrow || input === "j") {
       const next = rows[Math.min(rows.length - 1, index + 1)];
       if (next) setSlot(next.slot);
-      setAction(null);
+      clearAction();
       return;
     }
     if (/^[0-9]$/.test(input)) {
@@ -649,9 +708,12 @@ function App({ projectName }: { projectName: string }) {
       const next = rows[Number(input)];
       if (!next) return setMessage(`no row ${input} — this table shows ${rows.length} row${rows.length === 1 ? "" : "s"}.`);
       setSlot(next.slot);
-      setAction(null);
+      clearAction();
       return;
     }
+    // Moving, help and quitting stay live while a job runs; starting a second action does not,
+    // because the pane can only follow one and two verbs on one target would collide anyway.
+    if (runningJobId) return setMessage(`Job ${runningJobId} is running. Esc stops watching it · Ctrl-C cancels it.`);
     if (input === "R") return doRefresh();
     if (input === "s") return runRole("start");
     if (input === "S") return runRole("stop");
@@ -1203,11 +1265,15 @@ function ActionPane({ action, budget, width }: { action: ActionState; budget: nu
         <Text bold>{action.title}</Text>
         <Text dimColor>{`  ${action.command}`}</Text>
       </Text>
-      <Text>
+      <Text wrap="truncate-end">
         {action.exit === null ? (
-          <Text color="yellow">{`running ${elapsed}s — Ctrl-C interrupts`}</Text>
+          <Text color="yellow">
+            {action.jobId
+              ? `job ${action.jobId} · running ${elapsed}s — Esc stops watching · Ctrl-C cancels`
+              : `running ${elapsed}s — Ctrl-C interrupts`}
+          </Text>
         ) : (
-          <Text color={action.exit === 0 ? "green" : "red"}>{`exit ${action.exit} after ${elapsed}s`}</Text>
+          <Text color={action.exit === 0 ? "green" : "red"}>{`${action.jobId ? `job ${action.jobId} · ` : ""}exit ${action.exit} after ${elapsed}s`}</Text>
         )}
       </Text>
       {shown.map((line, lineIndex) => (
@@ -1226,7 +1292,8 @@ function ActionPane({ action, budget, width }: { action: ActionState; budget: nu
 
 /** Every line fits an 80-column terminal and truncates rather than wraps, so the pane is exactly this many rows. */
 const HELP_LINES = [
-  "keys — * confirms first · q or Esc quits · Ctrl-C interrupts an action",
+  "keys — * confirms first · q or Esc quits · Ctrl-C interrupts a lifecycle run",
+  "grove verbs run as jobs: Esc stops watching · Ctrl-C cancels · q leaves running",
   "↑/k ↓/j move · 0-9 jump to a row · o tmux · O owner · R fetch and re-read",
   "p plant · u uproot* · s start · S stop · r reset* · t status verb",
   "a apply the source config* · A apply over tracked changes* · b roll back*",

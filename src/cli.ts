@@ -30,19 +30,39 @@ import { pool } from "./commands/pool.js";
 import { claim } from "./commands/claim.js";
 import { release } from "./commands/release.js";
 import { current, use } from "./commands/current.js";
+import { cancel, jobs, logs } from "./commands/jobs.js";
+import { recordJobExitOnExit, startDetachedJob } from "./jobs.js";
 import { noticeIfUpdateAvailable } from "./update-notice.js";
 import { SECRET_ENV_HELP } from "./env.js";
 
 const pkgPath = resolve(dirname(fileURLToPath(import.meta.url)), "..", "package.json");
 const { version } = JSON.parse(readFileSync(pkgPath, "utf-8")) as { version: string };
 
+// A detached job is this same CLI re-launched by `startDetachedJob`. It records
+// its own exit, because grove's commands set process.exitCode rather than
+// throwing, so the code is only final at exit.
+const jobId = process.env.GROVE_JOB_ID;
+if (jobId) recordJobExitOnExit(jobId);
+
 // Notify (don't auto-install) when a newer grove is published. Throttled, and
-// written to stderr so stdout stays clean for callers that parse it.
-await noticeIfUpdateAvailable(version);
+// written to stderr so stdout stays clean for callers that parse it. A job's
+// log is read back as the record of one verb, so the notice stays out of it.
+if (!jobId) await noticeIfUpdateAvailable(version);
 
 // pnpm passes the argument separator through to package scripts. Strip it so the
 // documented `pnpm dev -- <verb>` form reaches Grove exactly as `<verb>` does.
 if (process.argv[2] === "--") process.argv.splice(2, 1);
+
+const DETACH_HELP = `Background jobs
+
+A long verb — plant, apply, release, rollout, rollback, restore, uproot — takes minutes. Add --detach to run it in a detached copy of grove whose output goes to a log file, which frees the terminal immediately:
+
+  grove release northlight/3 --detach   start it and return to the prompt
+  grove jobs                            every recorded job and its state
+  grove logs <id> -f                    watch a running job; Ctrl-C stops watching, not the job
+  grove cancel <id>                     ask a running job to stop
+
+<id> also accepts a target ref, which names that target's most recent job. Closing the window that started a job does not stop it. A job stopped partway leaves the same reservation an interrupted foreground run does, and grove list names the re-run that finishes it.`;
 
 const program = new Command();
 
@@ -50,7 +70,7 @@ program
   .name("grove")
   .description("Parallel project instance manager")
   .version(version)
-  .addHelpText("after", `\n${SECRET_ENV_HELP}\n`);
+  .addHelpText("after", `\n${SECRET_ENV_HELP}\n\n${DETACH_HELP}\n`);
 
 program
   .command("dev [args...]")
@@ -126,6 +146,33 @@ function collectString(value: string, previous: string[]): string[] {
   return [...previous, value];
 }
 
+/**
+ * Verbs that ask for confirmation on stdin. A detached job has no stdin to
+ * answer with, so grove refuses rather than detaching a command that would
+ * stall forever waiting for a reply nobody can give.
+ */
+const CONFIRMS_BEFORE_RUNNING = new Set(["restore", "uproot"]);
+
+/**
+ * Turn a `--detach` run into a job before its action ever runs. One hook covers
+ * every detachable verb, so the verbs themselves stay unaware of jobs.
+ */
+program.hook("preAction", (_program, actionCommand) => {
+  const options = actionCommand.opts() as { detach?: boolean; force?: boolean };
+  if (!options.detach) return;
+  const verb = actionCommand.name();
+  if (CONFIRMS_BEFORE_RUNNING.has(verb) && !options.force) {
+    console.error(`Error: grove ${verb} asks for confirmation, and a detached run has no stdin to answer it. Add --force to run it detached.`);
+    process.exit(1);
+  }
+  const args = process.argv.slice(2).filter((argument) => argument !== "-d" && argument !== "--detach");
+  const job = startDetachedJob(args, args.join(" "));
+  console.log(`Started job ${job.id}: grove ${job.label}`);
+  console.log(`  watch:  grove logs ${job.id} -f`);
+  console.log(`  stop:   grove cancel ${job.id}`);
+  process.exit(0);
+});
+
 program
   .command("plant <project> [name]")
   .description("Reserve a slot, then create a new project instance")
@@ -135,6 +182,7 @@ program
   .option("--from <ref>", "State to start from (default: baseline)")
   .option("--ignore-fingerprint", "Restore even when the captured schema differs")
   .option("--label <key=value>", "Instance label; repeatable (key: [a-z0-9._-]+)", collectString, [])
+  .option("-d, --detach", "Run detached as a background job and return immediately")
   .addHelpText("after", `\n${CODE_GRAMMAR}\n\n${REF_GRAMMAR}\n\n${SLOT_CAP_GRAMMAR}\n`)
   .action(async (project: string, name: string | undefined, options) => { await plant(project, name, options); });
 
@@ -157,6 +205,7 @@ program
   .description("Return one instance to its configured code, baseline state, and ready pool")
   .option("--instance <target>", "Target one instance instead of using [target]")
   .option("--force", "Discard repository changes, side branches, and extra worktrees before release")
+  .option("-d, --detach", "Run detached as a background job and return immediately")
   .addHelpText("after", "\nRelease refuses tracked or untracked changes in configured repositories, side branches with commits on no remote, changed extra worktrees, and checkouts detached on commits no remote holds. It fast-forwards configured branches, removes every extra worktree, deletes every local branch except each configured branch, resets data state, applies the project configuration, drops all labels, and sets grove.pool=ready in one final save. --force runs git reset --hard and git clean -fd in every configured repository and allows release to discard the otherwise refused side branches and worktrees. If interrupted before that save, the releasing reservation and existing labels remain; re-run grove release <target> to finish it.\n")
   .action(release);
 
@@ -167,6 +216,7 @@ program
   .option("-l, --selector <key=value[,key=value]>", "Select instances whose labels all match")
   .option("--all", "Select every planted instance")
   .option("--force", "Apply even when a target repo has tracked changes")
+  .option("-d, --detach", "Run detached as a background job and return immediately")
   .addHelpText("after", `\n${TARGETING_HELP}\n\nApply reruns copyFromSource, secrets, patchPortsIn, substituteIn, install, and setup.sh for an existing instance. It never clones code or applies state. It refuses the project source, or an instance being planted, uprooted, or restored. If setup is interrupted, re-run apply to complete it. It also refuses a source port contract that differs from the registration (run grove register --update), configured repositories that are not Git checkouts, and tracked changes unless --force; --force does not waive checkout validation. Untracked files may be overwritten by copyFromSource.\n`)
   .action(apply);
 
@@ -175,6 +225,7 @@ program
   .description("Fast-forward a project fleet, apply it, and verify lifecycle status")
   .option("-l, --selector <key=value[,key=value]>", "Select instances whose labels all match")
   .option("--all", "Select every planted instance (the default)")
+  .option("-d, --detach", "Run detached as a background job and return immediately")
   .addHelpText("after", `\nRollout selects every planted instance by default, or narrows the fleet with -l. It runs in slot order and stops at the first failure. Before changing an instance it refuses any tracked repository changes, then fetches and fast-forwards every configured repository to its configured branch, runs apply, runs lifecycle stop then start when both are declared, and requires lifecycle status to exit 0 when declared.\n`)
   .action(rollout);
 
@@ -182,6 +233,7 @@ program
   .command("rollback [target]")
   .description("Move one instance back to its previous recorded revision and apply it")
   .option("--instance <target>", "Target one instance instead of using [target]")
+  .option("-d, --detach", "Run detached as a background job and return immediately")
   .addHelpText("after", `\nRollback accepts one planted target only. It refuses tracked repository changes and requires at least two recorded revisions. It checks out every configured repository at the previous revision's recorded commit, reruns apply, and records the rollback with the timestamp it rolled back from.\n`)
   .action(rollback);
 
@@ -200,6 +252,7 @@ program
   .option("--all", "Select every planted instance")
   .option("--force", "Skip confirmation prompt")
   .option("--ignore-fingerprint", "Restore even when the captured schema differs")
+  .option("-d, --detach", "Run detached as a background job and return immediately (needs --force)")
   .addHelpText("after", `\n${TARGETING_HELP}\n\nFor one target: \`grove restore <target> <ref>\`. With -l or --all: \`grove restore [project] <ref> -l ...\`; omit [project] when it can be resolved from the current directory or is the only registered project. Restore refuses an instance being planted, uprooted, or applied. If restore is interrupted, re-run restore with the intended ref to complete it.\n\n${REF_GRAMMAR}\n`)
   .action(restore);
 
@@ -217,6 +270,7 @@ program
   .option("--all", "Select every planted instance")
   .option("--force", "Skip confirmation prompt; required with -l or --all")
   .option("--owner <value>", "Require this exact owner label before removal")
+  .option("-d, --detach", "Run detached as a background job and return immediately (needs --force)")
   .addHelpText("after", `\n${TARGETING_HELP}\n\nUproot with -l or --all requires --force. The configured teardown script alone receives GROVE_SIBLINGS_JSON: the slot-sorted JSON inventory remaining after this instance is gone, including the source at slot 0. No other dispatched command receives it.\n`)
   .action(uproot);
 
@@ -293,6 +347,25 @@ program
   .description("Full-screen slot table with per-instance operations")
   .addHelpText("after", "\nThe table shows the source at slot 0, every instance, and empty slots through the computed cap, with each instance's labels-derived pool readiness, config drift, unapplied state, and in-progress reservation. The selected row runs plant, uproot, apply, release, rollback, label, and the project's lifecycle verbs; the project runs claim and pool. Rollout and selector fan-out are command-line only. Press ? for the full key map.\n")
   .action((project: string | undefined) => ui(project));
+
+program
+  .command("jobs")
+  .description("List background jobs started with --detach")
+  .addHelpText("after", `\n${DETACH_HELP}\n`)
+  .action(jobs);
+
+program
+  .command("logs [job]")
+  .description("Print a job's output, or follow a running one")
+  .option("-f, --follow", "Stream new output until the job ends")
+  .addHelpText("after", "\n[job] is a job id, a unique id prefix, or a target ref naming that target's most recent job; omit it for the most recent job of all. Ctrl-C while following stops watching and leaves the job running.\n")
+  .action(async (job: string | undefined, options: { follow?: boolean }) => { await logs(job, options); });
+
+program
+  .command("cancel <job>")
+  .description("Ask a running background job to stop")
+  .addHelpText("after", "\nCancel sends the job's process group the same interrupt Ctrl-C would. A verb stopped partway leaves its reservation in place; grove list names the re-run that finishes it.\n")
+  .action(cancel);
 
 program
   .command("doctor [project]")
