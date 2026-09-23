@@ -15,13 +15,14 @@ interface WorktreeEntry {
   prunable: boolean;
 }
 
-/** Resolve every configured repository without inferring a branch from a checkout. */
-export function configuredRepositories(root: string, config: GroveRepoConfig | null, operation: string): ConfiguredRepository[] {
+/** Resolve configured repositories without inferring a branch from a checkout. */
+export function configuredRepositories(root: string, config: GroveRepoConfig | null, operation: string, existingOnly = false): ConfiguredRepository[] {
   if (!config?.repos || Object.keys(config.repos).length === 0) {
     throw new Error(`cannot ${operation}: ${root}'s config declares no repositories with configured branches`);
   }
-  return Object.entries(config.repos).map(([name, spec]) => {
+  return Object.entries(config.repos).flatMap(([name, spec]) => {
     const repoPath = path.join(root, name);
+    if (existingOnly && !fs.existsSync(repoPath)) return [];
     if (!fs.existsSync(path.join(repoPath, ".git"))) {
       throw new Error(`cannot ${operation}: configured repo is not a git checkout: ${repoPath}`);
     }
@@ -29,7 +30,7 @@ export function configuredRepositories(root: string, config: GroveRepoConfig | n
     if (path.resolve(gitRoot) !== fs.realpathSync(repoPath)) {
       throw new Error(`cannot ${operation}: configured repo is not its git worktree root: ${repoPath}`);
     }
-    return { name, path: repoPath, branch: spec.branch ?? "main" };
+    return [{ name, path: repoPath, branch: spec.branch ?? "main" }];
   });
 }
 
