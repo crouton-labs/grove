@@ -217,7 +217,7 @@ function recordedExternalWorktrees(target: GroveTarget): string[] {
   if (!target.instance || !fs.existsSync(target.instance.path)) return [];
   const config = loadRepoConfig(target.project.source, target.project.configFile);
   if (!config?.repos || Object.keys(config.repos).length === 0) return [];
-  const repositories = configuredRepositories(target.instance.path, config, "uproot");
+  const repositories = configuredRepositories(target.instance.path, config, "uproot", true);
   const paths = new Set<string>();
   for (const repository of repositories) {
     let output: string;
