@@ -1,4 +1,12 @@
-# Grove
+# grove — a CLI that manages parallel project instances with isolated slot-based ports
+
+![grove](https://raw.githubusercontent.com/crouton-labs/grove/main/assets/banner.svg)
+
+<p align="center">
+  <a href="https://www.npmjs.com/package/@crouton-kit/grove"><img alt="npm" src="https://img.shields.io/npm/v/@crouton-kit/grove?label=npm"></a>
+  <a href="https://nodejs.org"><img alt="node" src="https://img.shields.io/badge/node-%3E%3D22-339933"></a>
+  <a href="LICENSE"><img alt="license" src="https://img.shields.io/badge/license-MIT-blue"></a>
+</p>
 
 Grove manages parallel project instances with isolated slot-based ports. Each registered project defines ports as `base + slot × offset`; `grove plant` reserves a slot, then clones or copies the project, applies the slot configuration, installs dependencies, and runs the project setup script. Registry changes are serialized with `~/.grove/grove.lock`, so concurrent plants cannot take the same slot.
 
