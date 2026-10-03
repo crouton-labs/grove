@@ -39,7 +39,7 @@ export type StateRef =
 export function parseInstanceRef(ref: string): [string, string] {
   const parts = ref.split("/");
   if (parts.length !== 2 || !parts[0] || !parts[1]) {
-    throw new Error(`specify the instance as project/name (e.g. "northlight/2"), got "${ref}"`);
+    throw new Error(`specify the instance as project/name (e.g. "cloud/2"), got "${ref}"`);
   }
   return [parts[0], parts[1]];
 }

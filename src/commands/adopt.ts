@@ -108,7 +108,7 @@ function detectSlotFromEnv(
   instancePath: string,
   portDefs: Record<string, { base: number; offset: number }>,
 ): number | null {
-  for (const rel of ["northlight-core/.env", ".env"]) {
+  for (const rel of [".env"]) {
     const envPath = path.join(instancePath, rel);
     if (!fs.existsSync(envPath)) continue;
     const match = fs.readFileSync(envPath, "utf-8").match(/^PORT=(\d+)/m);

@@ -70,7 +70,7 @@ export interface GroveProjectConfig {
   ports: Record<string, PortDef>;
   instances: GroveInstance[];
   // Shell-alias scheme: { aliasPrefix: subdir-relative-to-instance }.
-  // e.g. { "cr": ".", "cn": "northlight", "cv": "northlight-vault" }
+  // e.g. { "cr": ".", "cn": "cloud", "cv": "cloud-vault" }
   // generates `alias cr<slot>='cd <instance>'`, etc.
   aliases?: Record<string, string>;
 }

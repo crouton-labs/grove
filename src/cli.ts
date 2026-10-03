@@ -57,7 +57,7 @@ const DETACH_HELP = `Background jobs
 
 A long verb — plant, apply, release, rollout, rollback, restore, uproot — takes minutes. Add --detach to run it in a detached copy of grove whose output goes to a log file, which frees the terminal immediately:
 
-  grove release northlight/3 --detach   start it and return to the prompt
+  grove release cloud/3 --detach   start it and return to the prompt
   grove jobs                            every recorded job and its state
   grove logs <id> -f                    watch a running job; Ctrl-C stops watching, not the job
   grove cancel <id>                     ask a running job to stop

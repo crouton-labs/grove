@@ -27,7 +27,7 @@ const FOLLOW_INTERVAL_MS = 250;
 
 export interface GroveJob {
   id: string;
-  /** The verb and target as a person would say it: `release northlight/3`. */
+  /** The verb and target as a person would say it: `release cloud/3`. */
   label: string;
   /** Grove's own argv for the run, without the program name. */
   args: string[];
@@ -125,7 +125,7 @@ export function runningJobs(): GroveJob[] {
 
 /**
  * Resolve what a person typed into one job: an id, a unique id prefix, or a
- * target ref such as `northlight/3`, which selects that target's newest job.
+ * target ref such as `cloud/3`, which selects that target's newest job.
  * Ambiguity is named rather than guessed at.
  */
 export function resolveJob(ref: string): GroveJob {
