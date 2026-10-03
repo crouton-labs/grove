@@ -45,7 +45,7 @@ function parseTarget(args: string[]): { target?: string; instance?: string; forw
     const value = args[index];
     if (value === "--at" || value === "--instance") {
       const next = args[index + 1];
-      if (!next) throw new Error(`${value} requires a target such as northlight/2`);
+      if (!next) throw new Error(`${value} requires a target such as cloud/2`);
       if (value === "--at") target = next; else instance = next;
       index += 2;
       continue;

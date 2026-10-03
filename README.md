@@ -23,7 +23,7 @@ pnpm dev -- --help
 `grove setup` reads `.grove/config.json` at a source repository root, validates its contract, and converges the machine registration without authoring repository files. `grove register` remains the lower-level primitive for custom or explicit registration updates. Composite workspaces can keep the definition in their owning repository and pass its path relative to the registered source root:
 
 ```bash
-grove register /path/to/workspace --config northlight/.grove/config.json
+grove register /path/to/workspace --config cloud/.grove/config.json
 ```
 
 The selected config path is stored in `~/.grove/grove.json`. An optional `setup.sh` beside the selected config runs after the instance has been copied or cloned. Teardown runs when the config names `teardownScript`.
@@ -40,7 +40,7 @@ A version 1 config can define:
 - per-repository `install` commands
 - `teardownScript`
 - `secrets`, per-repository commands that materialize untracked configuration in the target
-- `devCommand`, an optional executable path relative to the target root (for example `scripts/dev.sh` or `northlight/scripts/dev.sh`)
+- `devCommand`, an optional executable path relative to the target root (for example `scripts/dev.sh` or `cloud/scripts/dev.sh`)
 - `lifecycle`, an optional mapping of `start`, `stop`, `status`, and `reset` to non-empty argument arrays for `devCommand`
 - `nameIsSlot`, an optional boolean that requires instances to use their slot number as both name and directory name
 - `stateCommand`, an optional executable path with the same shape, giving the project a data-state layer
@@ -63,7 +63,7 @@ The legacy init script receives the user and project scopes, but not the slot sc
 
 ```json
 "secrets": [
-  { "dir": "northlight/apps/core", "cmds": ["op inject -i .env.tpl -o .env"] }
+  { "dir": "cloud/apps/core", "cmds": ["op inject -i .env.tpl -o .env"] }
 ]
 ```
 
@@ -72,7 +72,7 @@ The legacy init script receives the user and project scopes, but not the slot sc
 ```json
 "substituteIn": [
   {
-    "in": ["northlight/apps/core/env/crouter.*.env"],
+    "in": ["cloud/apps/core/env/crouter.*.env"],
     "find": "nl-core-g\\d+\\.ngrok\\.app",
     "replace": "nl-core-${machine}-g${slot}.ngrok.app"
   }
@@ -165,7 +165,7 @@ Snapshots live in `~/.grove/states/<project>/<name>/`, holding `meta.json` and w
 
 `killTmuxSessionOnStop` (default `false`) makes `grove stop <target>` kill the target's tmux session after the project's stop verb exits 0. The kill runs last, so the verb's output is written first, and a failed kill warns rather than failing the command — the services genuinely stopped. A non-zero stop leaves the session alone, so the window showing why it failed survives.
 
-Grove derives the session name as `<project>-<slot>`: `northlight-3` for slot 3 and `northlight-0` for the project source. `grove open --json` prints it as `tmuxSession`, and `grove ui`'s `o` key switches to it. An unknown key, a wrong type, a `version` other than 1, or unparseable JSON is a refusal naming the file and the key — from `grove doctor` and from `grove stop` before it stops anything.
+Grove derives the session name as `<project>-<slot>`: `cloud-3` for slot 3 and `cloud-0` for the project source. `grove open --json` prints it as `tmuxSession`, and `grove ui`'s `o` key switches to it. An unknown key, a wrong type, a `version` other than 1, or unparseable JSON is a refusal naming the file and the key — from `grove doctor` and from `grove stop` before it stops anything.
 
 ## grove ui
 

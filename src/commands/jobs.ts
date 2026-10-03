@@ -38,7 +38,7 @@ export function jobs(): void {
     const all = listJobs();
     if (all.length === 0) {
       console.log("No background jobs. Start one by adding --detach to a long verb, for example:");
-      console.log("  grove release northlight/3 --detach");
+      console.log("  grove release cloud/3 --detach");
       return;
     }
     console.log(`ID      ${"STATE".padEnd(STATE_WIDTH)}${"ELAPSED".padEnd(9)}START  COMMAND`);
